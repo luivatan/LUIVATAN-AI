@@ -1,0 +1,6 @@
+*.gguf
+.venv/
+__pycache__/
+database/
+chroma/
+*.pyc

@@ -1,0 +1,13 @@
+LUIVATAN AI is an offline medical document assistant.
+
+Features:
+- Local AI
+- PDF ingestion
+- OCR support
+- Conversation memory
+- Source citations
+- Privacy-first
+- No internet required
+
+Document scope:
+This AI is designed for medical documents. Uploads that do not look medical are not blocked, but the app warns that results may be less reliable for non-medical content.

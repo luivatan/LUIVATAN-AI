@@ -1,0 +1,4 @@
+sentence-transformers
+llama-cpp-python
+chromadb
+pypdf
