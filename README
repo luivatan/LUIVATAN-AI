@@ -6,8 +6,69 @@ Features:
 - OCR support
 - Conversation memory
 - Source citations
+- Source viewer
+- Uploaded document library
+- First-run GGUF model selection
 - Privacy-first
 - No internet required
 
 Document scope:
 This AI is designed for medical documents. Uploads that do not look medical are not blocked, but the app warns that results may be less reliable for non-medical content.
+
+LLM provider:
+The app can use different LLM backends through environment variables.
+
+Default local GGUF with llama.cpp:
+Start the app and select a `.gguf` model in the UI.
+```bash
+LLM_PROVIDER=llama_cpp \
+python3 ingest.py
+```
+
+Advanced: preselect a GGUF model with an environment variable.
+```bash
+LLM_PROVIDER=llama_cpp \
+LLAMA_MODEL_PATH="/path/to/model.gguf" \
+python3 ingest.py
+```
+
+Ollama:
+```bash
+LLM_PROVIDER=ollama \
+OLLAMA_MODEL="llama3.1:8b" \
+OLLAMA_URL="http://localhost:11434" \
+python3 ingest.py
+```
+
+OpenAI or OpenAI-compatible API:
+```bash
+LLM_PROVIDER=openai_compatible \
+OPENAI_API_BASE="https://api.openai.com/v1" \
+OPENAI_API_KEY="your-api-key" \
+OPENAI_MODEL="gpt-4.1-mini" \
+python3 ingest.py
+```
+
+Local Hugging Face Transformers model:
+```bash
+LLM_PROVIDER=transformers \
+HF_MODEL_PATH="Qwen/Qwen2.5-0.5B-Instruct" \
+python3 ingest.py
+```
+
+First-run behavior:
+No GGUF model is hard-coded. On first run, use the Select GGUF Model control to choose a `.gguf` model file before chatting.
+
+Missing packages:
+If a required package is missing, install project dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+Packaging:
+For local development, run the app with:
+```bash
+./launch_luivatan.sh
+```
+
+For a true double-click desktop app, package this project with a Python app bundler such as PyInstaller or Nuitka on the target operating system. The app is now ready for that flow because model selection happens inside the UI instead of requiring a hard-coded model path.
