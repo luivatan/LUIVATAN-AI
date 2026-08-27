@@ -124,6 +124,14 @@ class AuthService:
             db.execute("UPDATE users SET password_hash=? WHERE id=?", (self._hash_password(new_password), user["id"]))
             db.execute("DELETE FROM tokens WHERE user_id=? AND kind='session'", (user["id"],))
 
+    def session_user(self, session: str) -> dict:
+        """Validate a session without rotating it; useful for request middleware."""
+        digest = hashlib.sha256(session.encode()).hexdigest()
+        with self._connect() as db:
+            row = db.execute("SELECT u.* FROM tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.kind='session' AND t.expires_at>=?", (digest, time.time())).fetchone()
+        if not row: raise AccountError("This session is invalid or expired.")
+        return {"id": row["id"], "email": row["email"], "display_name": row["display_name"], "verified": bool(row["verified"]), "role": row["role"]}
+
     def logout(self, session: str) -> None:
         digest = hashlib.sha256(session.encode()).hexdigest()
         with self._connect() as db:

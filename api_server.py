@@ -1,11 +1,16 @@
 """Apex AI HTTP foundation. Run with: uvicorn api_server:app --reload"""
 import os
-from fastapi import FastAPI, HTTPException, Response, Cookie
+from pathlib import Path
+from fastapi import FastAPI, HTTPException, Response, Cookie, UploadFile, File
+from apex_documents import DocumentQueue, DocumentError
+from apex_security import secure_upload
 from pydantic import BaseModel
 from apex_auth import AuthService, AccountError
 
 app = FastAPI(title="Apex AI API", version="0.1.0")
 auth = AuthService(os.getenv("ACCOUNT_DATABASE", "accounts.sqlite3"))
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploaded_pdfs"))
+document_queue = DocumentQueue()
 
 class Registration(BaseModel):
     email: str
@@ -19,8 +24,35 @@ class Reset(BaseModel): token: str; password: str
 
 def fail(exc): raise HTTPException(status_code=400, detail=str(exc))
 
+def require_user(apex_session):
+    if not apex_session: raise HTTPException(status_code=401, detail="Authentication required.")
+    try: return auth.session_user(apex_session)
+    except AccountError as exc: raise HTTPException(status_code=401, detail=str(exc))
+
 @app.get("/api/health")
 def health(): return {"status": "ok", "service": "apex-ai"}
+
+@app.post("/api/documents")
+async def upload_document(file: UploadFile = File(...), apex_session: str | None = Cookie(default=None)):
+    require_user(apex_session)
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF documents are supported.")
+    import tempfile
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp:
+            temp.write(await file.read())
+            temporary = Path(temp.name)
+        saved = secure_upload(temporary, UPLOAD_DIR)
+        doc = document_queue.submit(saved)
+        return {"id": doc.id, "filename": doc.filename, "status": doc.status}
+    except (DocumentError, OSError) as exc: raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        if 'temporary' in locals(): temporary.unlink(missing_ok=True)
+
+@app.get("/api/documents")
+def documents(apex_session: str | None = Cookie(default=None)):
+    require_user(apex_session)
+    return [{"id": d.id, "filename": d.filename, "status": d.status, "pages": d.pages, "chunks": len(d.chunks), "error": d.error} for d in document_queue.list_documents()]
 
 @app.post("/api/auth/register")
 def register(body: Registration):
@@ -51,7 +83,7 @@ def logout(response: Response, apex_session: str | None = Cookie(default=None)):
 @app.get("/api/me")
 def me(apex_session: str | None = Cookie(default=None)):
     if not apex_session: raise HTTPException(status_code=401, detail="Authentication required.")
-    try: return auth.current_user(apex_session)
+    try: return auth.session_user(apex_session)
     except AccountError as exc: raise HTTPException(status_code=401, detail=str(exc))
 
 @app.post("/api/auth/password-reset/request")
