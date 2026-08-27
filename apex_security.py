@@ -11,7 +11,8 @@ def secure_upload(path, destination, max_bytes=MAX_FILE_BYTES):
     if source.stat().st_size>max_bytes: raise SecurityError("Upload exceeds the configured size limit.")
     destination=Path(destination);destination.mkdir(parents=True,exist_ok=True)
     # Never preserve a user-controlled path; random prefix avoids collisions.
-    name=f"{secrets.token_hex(8)}-{source.name.replace('/','_').replace('\\','_')}"
+    safe_name = source.name.replace("/", "_").replace("\\", "_")
+    name=f"{secrets.token_hex(8)}-{safe_name}"
     target=(destination/name).resolve()
     if destination.resolve() not in target.parents: raise SecurityError("Unsafe upload path.")
     target.write_bytes(source.read_bytes())
