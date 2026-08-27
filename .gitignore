@@ -1,6 +1,36 @@
-*.gguf
-.venv/
+# --- secrets & local config ------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- python ----------------------------------------------------------------
 __pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# --- models (NEVER commit model files) --------------------------------------
+*.gguf
+*.gguf.tmp
+models/
+!models/.gitkeep
+
+# --- runtime data ------------------------------------------------------------
 database/
 chroma/
-*.pyc
+data/
+logs/
+cache/
+eval/reports/
+uploaded_pdfs/
+
+# --- editor / tooling --------------------------------------------------------
+.continue/
+.idea/
+.vscode/
+*.swp
+.DS_Store

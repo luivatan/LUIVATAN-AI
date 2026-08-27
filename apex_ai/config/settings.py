@@ -1,0 +1,196 @@
+"""Centralized configuration for Apex AI.
+
+Design notes
+------------
+- Every knob comes from an environment variable (optionally via a ``.env``
+  file). Nothing is hardcoded to a personal filesystem path.
+- Relative paths are resolved against the **project root**, not the current
+  working directory. The old code used ``./database`` which silently pointed
+  somewhere else if you launched from another folder.
+- Legacy variable names from the pre-Apex project (``LLM_PROVIDER``,
+  ``LLAMA_MODEL_PATH``, ``OLLAMA_*``, ``OPENAI_*``, ``HF_MODEL_PATH``) are
+  still honored so existing setups keep working; ``APEX_*`` names win.
+"""
+
+from __future__ import annotations
+
+import os
+import warnings
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+_TRUTHY = {"1", "true", "yes", "on"}
+_WARNED_LEGACY: set[str] = set()
+
+
+def _env(*names: str, default: str = "") -> str:
+    """Return the first non-empty env var among ``names``.
+
+    ``names[0]`` should be the canonical ``APEX_*`` name; any further names are
+    legacy aliases. A one-time deprecation warning is emitted for aliases.
+    """
+    for index, name in enumerate(names):
+        value = os.environ.get(name)
+        if value:
+            if index > 0 and name not in _WARNED_LEGACY:
+                _WARNED_LEGACY.add(name)
+                warnings.warn(
+                    f"Environment variable `{name}` is deprecated; use `{names[0]}` instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+            return value
+    return default
+
+
+def resolve_path(raw: str | Path) -> Path:
+    """Resolve ``raw`` to an absolute Path, relative to the project root."""
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path
+
+
+@dataclass(frozen=True)
+class Settings:
+    """Immutable snapshot of the entire application configuration."""
+
+    # --- application -------------------------------------------------
+    app_name: str = "Apex AI"
+    offline: bool = False
+
+    # --- paths (defaults are project-root relative) -------------------
+    database_path: Path = field(default_factory=lambda: resolve_path("data/chroma"))
+    collection_name: str = "apex_docs"
+    upload_dir: Path = field(default_factory=lambda: resolve_path("data/uploads"))
+    model_dir: Path = field(default_factory=lambda: resolve_path("models"))
+    model_path: str = ""  # empty = not preselected; UI/manager decides
+    log_dir: Path = field(default_factory=lambda: resolve_path("logs"))
+    cache_dir: Path = field(default_factory=lambda: resolve_path("data/cache"))
+    memory_path: Path = field(default_factory=lambda: resolve_path("data/conversation_memory.json"))
+
+    # --- embeddings ---------------------------------------------------
+    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_batch_size: int = 32
+
+    # --- LLM ----------------------------------------------------------
+    llm_provider: str = "llama_cpp"
+    llm_context_size: int = 4096
+    n_gpu_layers: int = 0  # 0 = CPU only; -1 = offload all layers (llama.cpp)
+    n_threads: int = 0  # 0 = let llama.cpp decide
+    ollama_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen2.5-coder:7b"
+    openai_api_base: str = "https://api.openai.com/v1"
+    openai_api_key: str = ""  # secret: env/.env only, never committed
+    openai_model: str = "gpt-4.1-mini"
+    hf_model_path: str = "Qwen/Qwen2.5-0.5B-Instruct"
+
+    # --- chunking -------------------------------------------------------
+    chunk_size: int = 1000
+    chunk_overlap: int = 150
+    min_chunk_size: int = 200
+    max_chunk_size: int = 1600
+
+    # --- retrieval ------------------------------------------------------
+    top_k: int = 12  # hybrid candidate pool (~10-20 per spec)
+    rerank_top_k: int = 4  # final evidence given to the LLM (3-5 per spec)
+    vector_weight: float = 0.6
+    keyword_weight: float = 0.4
+    min_similarity: float = 0.30  # below this → "insufficient evidence"
+    reranker_mode: str = "auto"  # auto | cross_encoder | lexical | off
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    query_rewrite: bool = False  # optional LLM-based query rewriting
+    medical_mode: bool = True  # adds the medical-safety addendum to prompts
+
+    # --- context / generation --------------------------------------------
+    context_char_limit: int = 6000
+    memory_turns: int = 8
+
+    # --- server ------------------------------------------------------------
+    server_name: str = "0.0.0.0"
+    server_port: int = 7860
+
+
+def _int(raw: str, default: int) -> int:
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _float(raw: str, default: float) -> float:
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _bool(raw: str, default: bool) -> bool:
+    if raw == "":
+        return default
+    return raw.strip().lower() in _TRUTHY
+
+
+def load_settings() -> Settings:
+    """Build a Settings snapshot from the environment (reads ``.env`` first)."""
+    try:
+        from dotenv import load_dotenv
+    except ModuleNotFoundError:  # pragma: no cover - dotenv is a core dep
+        pass
+    else:
+        # Look for `.env` in the CWD first, then in the project root, so the
+        # app behaves the same no matter where it is launched from.
+        for candidate in (Path.cwd() / ".env", PROJECT_ROOT / ".env"):
+            if candidate.is_file():
+                load_dotenv(candidate, override=False)
+                break
+
+    offline_raw = _env("APEX_OFFLINE", default="")
+
+    return Settings(
+        offline=_bool(offline_raw, False),
+        database_path=resolve_path(_env("APEX_DATABASE_PATH", default="data/chroma")),
+        collection_name=_env("APEX_COLLECTION", default="apex_docs"),
+        upload_dir=resolve_path(_env("APEX_UPLOAD_DIR", default="data/uploads")),
+        model_dir=resolve_path(_env("APEX_MODEL_DIR", default="models")),
+        model_path=_env("APEX_MODEL_PATH", "LLAMA_MODEL_PATH", default=""),
+        log_dir=resolve_path(_env("APEX_LOG_DIR", default="logs")),
+        cache_dir=resolve_path(_env("APEX_CACHE_DIR", default="data/cache")),
+        memory_path=resolve_path(_env("APEX_MEMORY_PATH", default="data/conversation_memory.json")),
+        embedding_model=_env("APEX_EMBEDDING_MODEL", default="all-MiniLM-L6-v2"),
+        embedding_batch_size=_int(_env("APEX_EMBEDDING_BATCH_SIZE", default="32"), 32),
+        llm_provider=_env("APEX_LLM_PROVIDER", "LLM_PROVIDER", default="llama_cpp").lower(),
+        llm_context_size=_int(_env("APEX_LLM_CONTEXT_SIZE", "LLM_CONTEXT_SIZE", default="4096"), 4096),
+        n_gpu_layers=_int(_env("APEX_N_GPU_LAYERS", default="0"), 0),
+        n_threads=_int(_env("APEX_N_THREADS", default="0"), 0),
+        ollama_url=_env("APEX_OLLAMA_URL", "OLLAMA_URL", default="http://127.0.0.1:11434"),
+        ollama_model=_env("APEX_OLLAMA_MODEL", "OLLAMA_MODEL", default="qwen2.5-coder:7b"),
+        openai_api_base=_env("APEX_OPENAI_API_BASE", "OPENAI_API_BASE", default="https://api.openai.com/v1"),
+        openai_api_key=_env("APEX_OPENAI_API_KEY", "OPENAI_API_KEY", default=""),
+        openai_model=_env("APEX_OPENAI_MODEL", "OPENAI_MODEL", default="gpt-4.1-mini"),
+        hf_model_path=_env("APEX_HF_MODEL_PATH", "HF_MODEL_PATH", default="Qwen/Qwen2.5-0.5B-Instruct"),
+        chunk_size=_int(_env("APEX_CHUNK_SIZE", default="1000"), 1000),
+        chunk_overlap=_int(_env("APEX_CHUNK_OVERLAP", default="150"), 150),
+        min_chunk_size=_int(_env("APEX_MIN_CHUNK_SIZE", default="200"), 200),
+        max_chunk_size=_int(_env("APEX_MAX_CHUNK_SIZE", default="1600"), 1600),
+        top_k=_int(_env("APEX_TOP_K", default="12"), 12),
+        rerank_top_k=_int(_env("APEX_RERANK_TOP_K", default="4"), 4),
+        vector_weight=_float(_env("APEX_VECTOR_WEIGHT", default="0.6"), 0.6),
+        keyword_weight=_float(_env("APEX_KEYWORD_WEIGHT", default="0.4"), 0.4),
+        min_similarity=_float(_env("APEX_MIN_SIMILARITY", default="0.30"), 0.30),
+        reranker_mode=_env("APEX_RERANKER", default="auto").lower(),
+        reranker_model=_env("APEX_RERANKER_MODEL", default="cross-encoder/ms-marco-MiniLM-L-6-v2"),
+        query_rewrite=_bool(_env("APEX_QUERY_REWRITE", default=""), False),
+        medical_mode=_bool(_env("APEX_MEDICAL_MODE", default=""), True),
+        context_char_limit=_int(_env("APEX_CONTEXT_CHAR_LIMIT", default="6000"), 6000),
+        memory_turns=_int(_env("APEX_MEMORY_TURNS", default="8"), 8),
+        server_name=_env("APEX_SERVER_NAME", default="0.0.0.0"),
+        server_port=_int(_env("APEX_SERVER_PORT", default="7860"), 7860),
+    )
+
+
+def with_overrides(settings: Settings, **changes) -> Settings:
+    """Return a new Settings with selected fields replaced (frozen dataclass)."""
+    return replace(settings, **changes)

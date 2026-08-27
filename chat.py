@@ -1,87 +1,71 @@
-from sentence_transformers import SentenceTransformer
-import chromadb
-from llama_cpp import Llama
+"""Terminal chat REPL for Apex AI (replaces the old hardcoded-path chat.py).
 
-# =========================
-# EMBEDDING MODEL
-# =========================
+Usage:
+    python chat.py                 # interactive question loop
+    python chat.py -q "question"   # one-shot question
 
-embed_model = SentenceTransformer('all-MiniLM-L6-v2')
+The active LLM comes from configuration (APEX_MODEL_PATH / APEX_MODEL_DIR /
+APEX_LLM_PROVIDER) — never a hardcoded path. Type 'exit' to quit, 'sources'
+to toggle citation printing, 'clear' to wipe conversation memory.
+"""
 
-# =========================
-# LOAD LLM
-# =========================
+from __future__ import annotations
 
-llm = Llama(
-    model_path="/media/shaggvt/progames/lm/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
-    n_ctx=2048
-)
+import argparse
+import sys
 
-# =========================
-# LOAD DATABASE
-# =========================
+from apex_ai.core.errors import ApexError
+from apex_ai.runtime import build_services
 
-client = chromadb.PersistentClient(path="./database")
 
-collection = client.get_or_create_collection(
-    name="medical_docs"
-)
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Apex AI terminal chat")
+    parser.add_argument("-q", "--question", type=str, default=None, help="one-shot question")
+    args = parser.parse_args()
 
-# =========================
-# CHAT LOOP
-# =========================
+    services = build_services(quiet_llm=False)
+    if services.startup_error:
+        print(services.startup_error)
+        return 1
 
-while True:
+    if args.question:
+        try:
+            result = services.engine.ask(args.question)
+            print(result.answer)
+            if result.sources_block:
+                print("\n" + result.sources_block)
+            return 0
+        except ApexError as error:
+            print(error.user_message())
+            return 1
 
-    query = input("\nAsk medical question: ")
+    print("Apex AI terminal chat — 'exit' to quit, 'clear' to reset memory.")
+    while True:
+        try:
+            question = input("\nAsk a question: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
 
-    query_embedding = embed_model.encode(query).tolist()
+        if question.lower() in {"exit", "quit"}:
+            return 0
+        if question.lower() == "clear":
+            services.memory.clear()
+            print("Conversation memory cleared.")
+            continue
+        if not question:
+            continue
 
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=3
-    )
-   
-    retrieved_chunks = "\n".join(
-        results['documents'][0]
-        
-    )
-    print("\n========== RETRIEVED TEXT ==========\n")
-    print(retrieved_chunks[:3000])
-    print("\n====================================\n")
-    print("\n====================")
-    print("RETRIEVED SOURCES")
-    print("====================\n")
+        try:
+            result = services.engine.ask(question)
+            print("\n" + result.answer)
+            if result.sources_block:
+                print("\n" + result.sources_block)
+        except ApexError as error:
+            print("\n" + error.user_message())
+        except Exception as error:  # unexpected — log has the traceback
+            print(f"\nUnexpected error: {error}\nSee logs/apex.log for details.")
 
-    for i, chunk in enumerate(results['documents'][0]):
 
-        print(f"\nSOURCE {i+1}:\n")
-        print(chunk[:500])
-
-        prompt = f"""
-        You are an advanced medical AI assistant.
-
-        Answer the question using ONLY the retrieved medical information.
-
-        Be specific and detailed.
-
-        If the information is unclear, explain what was found.
-
-        Retrieved Medical Information:
-        {retrieved_chunks}
-
-        Question:
-        {query}
-
-        Detailed Answer:
-        """
-    output = llm(
-        prompt,
-        max_tokens=300,
-        temperature=0.2
-    )
-
-    answer = output["choices"][0]["text"]
-
-    print("\nAI ANSWER:\n")
-    print(answer)
+if __name__ == "__main__":
+    raise SystemExit(main())

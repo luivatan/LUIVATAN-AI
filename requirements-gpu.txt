@@ -1,0 +1,19 @@
+# Apex AI — optional GPU acceleration
+#
+# By default Apex AI runs the LLM on CPU (APEX_N_GPU_LAYERS=0) and degrades
+# gracefully when no GPU exists. To offload layers to an NVIDIA GPU:
+#
+#   1. Install a CUDA-enabled llama.cpp build (choose ONE):
+#
+#      # Prebuilt CUDA wheel (fastest path, CUDA 12.1):
+#      pip install llama-cpp-python \
+#        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
+#
+#      # Or build from source (needs CUDA toolkit + C compiler):
+#      CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --no-cache-dir
+#
+#   2. Set the layer offload in .env:
+#      APEX_N_GPU_LAYERS=-1        # offload all layers (-1) or a number (e.g. 16)
+#
+# Embeddings also use the GPU automatically when torch sees your CUDA device.
+# No configuration is needed for CPU-only machines.

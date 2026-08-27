@@ -1,0 +1,7 @@
+# Apex AI — development dependencies
+# Install on top of requirements.txt:
+#   pip install -r requirements-dev.txt
+
+pytest>=8.0
+httpx>=0.27          # FastAPI TestClient
+fpdf2>=2.7           # regenerating test fixtures (scripts/make_test_fixtures.py)
