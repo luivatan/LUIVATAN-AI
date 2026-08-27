@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Response, Cookie, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 from apex_documents import DocumentQueue, DocumentError
 from apex_security import secure_upload
 from apex_retrieval import EmbeddingSystem, ChromaStore, RetrievalError
@@ -10,6 +11,7 @@ from pydantic import BaseModel
 from apex_auth import AuthService, AccountError
 
 app = FastAPI(title="Apex AI API", version="0.1.0")
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:4173", "http://127.0.0.1:4173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 auth = AuthService(os.getenv("ACCOUNT_DATABASE", "accounts.sqlite3"))
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploaded_pdfs"))
 document_queue = DocumentQueue()
