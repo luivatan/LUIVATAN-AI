@@ -4,6 +4,8 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Response, Cookie, UploadFile, File
 from apex_documents import DocumentQueue, DocumentError
 from apex_security import secure_upload
+from apex_retrieval import EmbeddingSystem, ChromaStore, RetrievalError
+from apex_answers import AnswerEngine, AnswerError
 from pydantic import BaseModel
 from apex_auth import AuthService, AccountError
 
@@ -11,6 +13,15 @@ app = FastAPI(title="Apex AI API", version="0.1.0")
 auth = AuthService(os.getenv("ACCOUNT_DATABASE", "accounts.sqlite3"))
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploaded_pdfs"))
 document_queue = DocumentQueue()
+_embeddings = None
+_store = None
+
+def retrieval_store():
+    global _embeddings, _store
+    if _store is None:
+        _embeddings = EmbeddingSystem()
+        _store = ChromaStore(os.getenv("DATABASE_PATH", "database"), embeddings=_embeddings)
+    return _store
 
 class Registration(BaseModel):
     email: str
@@ -21,6 +32,7 @@ class Login(BaseModel):
     password: str
 class ResetRequest(BaseModel): email: str
 class Reset(BaseModel): token: str; password: str
+class Question(BaseModel): question: str
 
 def fail(exc): raise HTTPException(status_code=400, detail=str(exc))
 
@@ -53,6 +65,21 @@ async def upload_document(file: UploadFile = File(...), apex_session: str | None
 def documents(apex_session: str | None = Cookie(default=None)):
     require_user(apex_session)
     return [{"id": d.id, "filename": d.filename, "status": d.status, "pages": d.pages, "chunks": len(d.chunks), "error": d.error} for d in document_queue.list_documents()]
+
+@app.post("/api/questions")
+def ask_question(body: Question, apex_session: str | None = Cookie(default=None)):
+    require_user(apex_session)
+    if not body.question.strip(): raise HTTPException(status_code=400, detail="Ask a question first.")
+    try:
+        results = retrieval_store().search(body.question, limit=8)
+        # The configured provider is resolved lazily; this keeps health/auth usable without a model.
+        from apex_llm import ModelConfig, ModelManager
+        manager = ModelManager()
+        answerer = AnswerEngine(manager.generator(ModelConfig.from_env()))
+        answer, citations = answerer.answer(body.question, results)
+        return {"answer": answer, "citations": [{"number": c.number, "source": c.source, "page": c.page, "text": c.text} for c in citations]}
+    except (RetrievalError, AnswerError) as exc: raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc: raise HTTPException(status_code=503, detail="AI service is not ready. Check the model configuration.") from exc
 
 @app.post("/api/auth/register")
 def register(body: Registration):
