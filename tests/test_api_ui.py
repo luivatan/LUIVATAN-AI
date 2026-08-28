@@ -104,6 +104,10 @@ def test_rag_debug_route_is_explicitly_gated(wired_services):
     assert response.status_code == 200
     payload = response.json()
     assert payload["retrieval"]["candidates"]
+    assert payload["conversation_context"]["character_count"] >= 0
+    assert payload["conversation_context"]["character_count"] <= (
+        wired_services.settings.history_char_limit
+    )
     assert payload["final_context"]
     assert payload["model_response"]
     assert payload["sources"]

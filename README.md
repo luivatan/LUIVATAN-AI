@@ -49,7 +49,8 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   model, with SOURCE / PAGE or PAGE RANGE / SECTION headers and a source viewer in the UI.
 - **Duplicate protection** — SHA-256 document IDs; re-uploading the same file is
   detected and skipped (or force re-indexed).
-- **Separated memory** — conversation memory exists only to resolve follow-ups; it is
+- **Bounded conversation context** — newest complete turns are selected under configurable
+  turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.
 - **Evaluation harness** — category-level retrieval, refusal, citation-integrity,
   groundedness-proxy, and per-stage latency measurements via `evaluate_rag.py`, with
@@ -82,7 +83,7 @@ apex_ai/
 ├── vectordb/     ChromaDB persistence, embedding-version metadata, doc registry
 ├── retrieval/    BM25 index, hybrid RRF pipeline, rerankers
 ├── rag/          query processing, context builder, prompts, RagEngine
-├── memory/       single-turn compatibility memory + SQLite conversation history
+├── memory/       bounded short-term context + JSON compatibility/SQLite history
 ├── web/          offline HTML/CSS/JS chat application and responsive design system
 ├── ui/           preserved legacy Gradio interface
 ├── api/          FastAPI, NDJSON chat streaming, uploads, conversations, legacy routes
@@ -155,7 +156,8 @@ python chat.py                 # terminal chat (add -q "question" for one-shot u
 
 See [`docs/CHAT_INTERFACE_ARCHITECTURE.md`](docs/CHAT_INTERFACE_ARCHITECTURE.md) for
 the browser components, streaming event protocol, memory/evidence boundary, and upload
-flow.
+flow. The Phase 41 short-term-history audit and design are documented in
+[`docs/PHASE41_CONVERSATION_CONTEXT.md`](docs/PHASE41_CONVERSATION_CONTEXT.md).
 
 ### Web endpoints used by the interface
 
@@ -192,7 +194,10 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_MIN_SIMILARITY` | `0.30` | semantic part of the evidence gate |
 | `APEX_QUERY_PROCESSING` / `APEX_QUERY_DECOMPOSITION` | `1` / `1` | automatic deterministic processing |
 | `APEX_QUERY_REWRITE` | `0` | optional extra LLM rewrite; not required for follow-ups |
-| `APEX_CONTEXT_CHAR_LIMIT` / `APEX_CONTEXT_TOKEN_RESERVE` | `6000` / `1024` | context budget and approximate model-window reserve |
+| `APEX_CONTEXT_CHAR_LIMIT` / `APEX_CONTEXT_TOKEN_RESERVE` | `6000` / `1024` | document-evidence budget and approximate model-window reserve |
+| `APEX_MEMORY_TURNS` / `APEX_HISTORY_TURNS` | `8` / `3` | recent pairs requested (and JSON-retained) versus pairs eligible for one prompt |
+| `APEX_HISTORY_CHAR_LIMIT` | `2400` | strict total short-term conversation-context budget |
+| `APEX_HISTORY_MESSAGE_CHAR_LIMIT` | `1000` | strict limit for each prior user/assistant message |
 | `APEX_RAG_DEBUG` | `0` | add developer-only trace route when explicitly enabled |
 | `APEX_CHUNK_SIZE` / `_OVERLAP` / `_MIN` / `_MAX` | 1000/150/200/1600 | chunking |
 | `APEX_DATABASE_PATH` | `data/chroma` | vector store location |
@@ -254,13 +259,14 @@ pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 
-134 tests cover extraction, page/section-safe chunking, metadata, embeddings,
+143 tests cover extraction, page/section-safe chunking, metadata, embeddings,
 vector-store operations, duplicate detection, exact and semantic retrieval, multi-query
-fusion, reranker/channel fallbacks, evidence gating, budget-safe context, citations,
-configuration, memory, persistent conversation CRUD/search, streaming/regeneration,
-safe uploads, developer-debug gating, responsive UI assets, the API, and both interface
-entry points. Automated tests run fully offline with deterministic hashing embeddings
-and a deterministic test LLM; these verify mechanics, not production model quality.
+fusion, reranker/channel fallbacks, evidence gating, budget-safe document and conversation
+context, citations, configuration, memory, persistent conversation CRUD/search,
+streaming/regeneration, safe uploads, developer-debug gating, responsive UI assets, the
+API, and both interface entry points. Automated tests run fully offline with deterministic
+hashing embeddings and a deterministic test LLM; these verify mechanics, not production
+model quality.
 
 ## Development
 

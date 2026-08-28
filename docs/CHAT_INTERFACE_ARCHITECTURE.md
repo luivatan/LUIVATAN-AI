@@ -68,6 +68,12 @@ common proxies from batching tokens.
 `RagEngine`. It is intentionally read-only during generation; the controller persists
 the final answer and its citations together.
 
+`build_conversation_context()` then selects a contiguous window of the newest complete
+turns under independently configurable turn, total-character, and per-message limits.
+The exact bounded result is reused for follow-up analysis, model-window accounting, and
+generation rather than formatting history independently at each boundary. Long messages
+retain both their beginning and end; older turns are dropped before newer ones.
+
 Conversation text remains prompt history only. It never enters the numbered evidence
 context and can never become a citation. Citations are serialized exclusively from the
 `AnswerResult.citations` produced by the existing engine.

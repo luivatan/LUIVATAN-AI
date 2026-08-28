@@ -16,12 +16,9 @@ from dataclasses import dataclass, field
 from apex_ai.core.errors import ApexError, ProviderError
 from apex_ai.core.logging import get_logger
 from apex_ai.core.types import AnswerResult, Citation, RetrievedChunk
+from apex_ai.memory.context import ConversationContext, build_conversation_context
 from apex_ai.rag.context_builder import BuiltContext, build_context
-from apex_ai.rag.prompts import (
-    INSUFFICIENT_EVIDENCE_ANSWER,
-    build_messages,
-    format_history,
-)
+from apex_ai.rag.prompts import INSUFFICIENT_EVIDENCE_ANSWER, build_messages
 from apex_ai.rag.query_processing import QueryProcessor, QueryTrace
 from apex_ai.retrieval.keyword import tokenize
 from apex_ai.retrieval.pipeline import RetrievalTrace
@@ -84,6 +81,7 @@ class PreparedTurn:
     evidence: list[RetrievedChunk] = field(default_factory=list)
     context: BuiltContext | None = None
     history: list[dict] = field(default_factory=list)
+    conversation_context: ConversationContext | None = None
     confidence: float = 0.0
     lexical_support: float = 0.0
     exact_anchor_support: float = 0.0
@@ -104,6 +102,11 @@ class PreparedTurn:
             "queries": list(self.queries),
             "query_processing": self.query_trace.to_dict() if self.query_trace else None,
             "retrieval": self.retrieval_trace.to_dict() if self.retrieval_trace else None,
+            "conversation_context": (
+                self.conversation_context.diagnostics(include_text=True)
+                if self.conversation_context
+                else None
+            ),
             "reranked_evidence": [
                 {
                     "rank": rank,
@@ -158,16 +161,17 @@ class RagEngine:
 
     # -- preparation (retrieval + context; no generation) -----------------
 
-    def _context_budget(self, question: str, history: list[dict]) -> int:
-        """Constrain evidence by both configured characters and model window.
+    def _context_budget(self, question: str, history_text: str) -> int:
+        """Constrain document evidence by the exact prepared history and model window.
 
         Four characters/token is an approximation, not tokenizer accounting;
-        the debug trace and report call out this limitation. The explicit
-        reserve leaves room for instructions, question, history, and output.
+        the debug trace and reports call out this limitation. The explicit
+        reserve leaves room for instructions and output. Conversation history
+        is built once, bounded independently, and accounted for here exactly.
         """
         context_tokens = max(1, int(getattr(self.settings, "llm_context_size", 4096)))
         reserve = max(0, int(getattr(self.settings, "context_token_reserve", 1024)))
-        dynamic_chars = len(question) + len(format_history(history))
+        dynamic_chars = len(question) + len(history_text)
         dynamic_tokens = (dynamic_chars + 3) // 4
         available_tokens = max(50, context_tokens - reserve - dynamic_tokens)
         model_budget = available_tokens * 4
@@ -244,29 +248,42 @@ class RagEngine:
         use_memory: bool = True,
         history_override: list[dict] | None = None,
     ) -> PreparedTurn:
-        history = (
+        prepare_started = time.perf_counter()
+        history_stage = time.perf_counter()
+        raw_history = (
             history_override
             if history_override is not None
             else (self.memory.recent() if (use_memory and self.memory) else [])
         )
+        conversation_context = build_conversation_context(
+            raw_history,
+            max_turns=int(getattr(self.settings, "history_turns", 3)),
+            char_limit=int(getattr(self.settings, "history_char_limit", 2400)),
+            message_char_limit=int(
+                getattr(self.settings, "history_message_char_limit", 1000)
+            ),
+        )
         turn = PreparedTurn(
             question=question,
-            history=history,
+            history=conversation_context.turns,
+            conversation_context=conversation_context,
             semantic_threshold=float(self.settings.min_similarity),
             lexical_threshold=float(
                 getattr(self.settings, "lexical_support_threshold", 0.60)
             ),
         )
-        prepare_started = time.perf_counter()
+        turn.timings["conversation_context"] = round(
+            (time.perf_counter() - history_stage) * 1000, 3
+        )
 
         stage = time.perf_counter()
         if hasattr(self.query_processor, "expand_with_trace"):
             turn.queries, turn.query_trace = self.query_processor.expand_with_trace(
-                question, history
+                question, turn.history
             )
             turn.errors.extend(turn.query_trace.errors)
         else:  # compatibility with custom processors implementing only expand()
-            turn.queries = self.query_processor.expand(question, history)
+            turn.queries = self.query_processor.expand(question, turn.history)
         turn.timings["query_processing"] = round((time.perf_counter() - stage) * 1000, 3)
 
         stage = time.perf_counter()
@@ -317,7 +334,7 @@ class RagEngine:
         try:
             turn.context = build_context(
                 turn.evidence,
-                self._context_budget(question, history),
+                self._context_budget(question, conversation_context.text),
             )
         except Exception as error:
             message = f"context: {type(error).__name__}: {error}"
@@ -476,7 +493,11 @@ class RagEngine:
             generation_skipped = True
         else:
             messages = build_messages(
-                question, turn.context.text, turn.history, medical=self.medical_mode
+                question,
+                turn.context.text,
+                turn.history,
+                medical=self.medical_mode,
+                history_text=turn.conversation_context.text,
             )
             generation_started = time.perf_counter()
             try:
@@ -539,7 +560,11 @@ class RagEngine:
             return self._insufficient(turn)
 
         messages = build_messages(
-            question, turn.context.text, turn.history, medical=self.medical_mode
+            question,
+            turn.context.text,
+            turn.history,
+            medical=self.medical_mode,
+            history_text=turn.conversation_context.text,
         )
         generation_started = time.perf_counter()
         try:
@@ -578,7 +603,11 @@ class RagEngine:
             return
 
         messages = build_messages(
-            question, turn.context.text, turn.history, medical=self.medical_mode
+            question,
+            turn.context.text,
+            turn.history,
+            medical=self.medical_mode,
+            history_text=turn.conversation_context.text,
         )
         generation_started = time.perf_counter()
         parts: list[str] = []

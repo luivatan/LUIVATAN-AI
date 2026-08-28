@@ -15,6 +15,8 @@ safety preamble (informational, not advice, no diagnosis).
 
 from __future__ import annotations
 
+from apex_ai.memory.context import build_conversation_context
+
 SYSTEM_GROUNDED = """You are Apex AI, a careful document assistant.
 
 Rules:
@@ -40,14 +42,21 @@ describe treatments or doses, report them as what the document states, include u
 and recommend consulting a healthcare professional for personal decisions."""
 
 
-def format_history(history: list[dict] | None, max_turns: int = 3) -> str:
-    if not history:
-        return "(no previous conversation)"
-    recent = history[-max_turns:]
-    return "\n".join(
-        f"User: {turn.get('user', '')}\nAssistant: {str(turn.get('assistant', ''))[:400]}"
-        for turn in recent
+def format_history(
+    history: list[dict] | None,
+    max_turns: int = 3,
+    *,
+    char_limit: int = 2400,
+    message_char_limit: int = 1000,
+) -> str:
+    """Compatibility wrapper around the bounded conversation-context builder."""
+    context = build_conversation_context(
+        history,
+        max_turns=max_turns,
+        char_limit=char_limit,
+        message_char_limit=message_char_limit,
     )
+    return context.text or "(no previous conversation)"
 
 
 def build_messages(
@@ -56,19 +65,26 @@ def build_messages(
     history: list[dict] | None = None,
     medical: bool = False,
     system_prompt: str | None = None,
+    *,
+    history_text: str | None = None,
 ) -> list[dict]:
     """Build the chat-messages payload for the LLM.
 
     Input: the user's original question, the formatted evidence block,
     conversation history (memory — not evidence), and the medical flag.
-    Output: list of {"role", "content"} dicts for chat-template providers.
+    ``history_text`` accepts the exact prebuilt bounded context so the engine
+    does not independently format or budget history twice. Output: list of
+    {"role", "content"} dicts for chat-template providers.
     """
     system = system_prompt or SYSTEM_GROUNDED
     if medical:
         system += MEDICAL_ADDENDUM
 
+    rendered_history = history_text if history_text is not None else format_history(history)
+    rendered_history = rendered_history or "(no previous conversation)"
     user_content = (
-        f"Conversation history (context only, not evidence):\n{format_history(history)}\n\n"
+        "Conversation history (context only, not evidence):\n"
+        f"{rendered_history}\n\n"
         f"Retrieved evidence:\n{evidence_context}\n\n"
         f"Question: {question}\n\n"
         "Answer (cite evidence with [n] markers; state plainly if evidence is insufficient):"

@@ -117,7 +117,10 @@ class Settings:
     # --- context / generation --------------------------------------------
     context_char_limit: int = 6000
     context_token_reserve: int = 1024
-    memory_turns: int = 8
+    memory_turns: int = 8  # retained/retrieved turns; not all are sent to the model
+    history_turns: int = 3  # newest complete turns eligible for one prompt
+    history_char_limit: int = 2400  # strict total conversation-context budget
+    history_message_char_limit: int = 1000  # strict limit per prior message
 
     # --- web application ---------------------------------------------------
     max_upload_mb: int = 50
@@ -223,7 +226,18 @@ def load_settings() -> Settings:
         context_token_reserve=max(
             128, _int(_env("APEX_CONTEXT_TOKEN_RESERVE", default="1024"), 1024)
         ),
-        memory_turns=_int(_env("APEX_MEMORY_TURNS", default="8"), 8),
+        memory_turns=max(1, _int(_env("APEX_MEMORY_TURNS", default="8"), 8)),
+        history_turns=max(0, _int(_env("APEX_HISTORY_TURNS", default="3"), 3)),
+        history_char_limit=max(
+            0, _int(_env("APEX_HISTORY_CHAR_LIMIT", default="2400"), 2400)
+        ),
+        history_message_char_limit=max(
+            0,
+            _int(
+                _env("APEX_HISTORY_MESSAGE_CHAR_LIMIT", default="1000"),
+                1000,
+            ),
+        ),
         max_upload_mb=max(1, _int(_env("APEX_MAX_UPLOAD_MB", default="50"), 50)),
         rag_debug=_bool(_env("APEX_RAG_DEBUG", default=""), False),
         server_name=_env("APEX_SERVER_NAME", default="0.0.0.0"),

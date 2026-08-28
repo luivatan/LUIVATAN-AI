@@ -1,3 +1,4 @@
+from apex_ai.memory.context import ConversationContext, build_conversation_context
 from apex_ai.memory.conversation import ConversationMemory
 from apex_ai.memory.conversations import (
     Conversation,
@@ -7,9 +8,11 @@ from apex_ai.memory.conversations import (
 )
 
 __all__ = [
-    "ConversationMemory",
     "Conversation",
+    "ConversationContext",
+    "ConversationMemory",
     "ConversationMemoryAdapter",
     "ConversationStore",
     "Message",
+    "build_conversation_context",
 ]

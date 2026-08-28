@@ -56,6 +56,18 @@ def test_phase2_rag_settings_are_environment_configurable(monkeypatch):
     assert settings.rag_debug
 
 
+def test_phase41_history_limits_are_environment_configurable(monkeypatch):
+    monkeypatch.setenv("APEX_MEMORY_TURNS", "12")
+    monkeypatch.setenv("APEX_HISTORY_TURNS", "4")
+    monkeypatch.setenv("APEX_HISTORY_CHAR_LIMIT", "3200")
+    monkeypatch.setenv("APEX_HISTORY_MESSAGE_CHAR_LIMIT", "900")
+    settings = load_settings()
+    assert settings.memory_turns == 12
+    assert settings.history_turns == 4
+    assert settings.history_char_limit == 3200
+    assert settings.history_message_char_limit == 900
+
+
 def test_apex_error_message_has_what_why_fix():
     error = ApexError(what="bad thing", why="reason", fix="do this")
     message = error.user_message()
