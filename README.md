@@ -290,7 +290,8 @@ retrieval, model loads, and timings are logged, document *contents* are not.
 - Chunk quality depends on PDF extraction quality; complex multi-column layouts and
   tables are approximated.
 - The cross-encoder reranker needs its model downloaded once; if unavailable or broken,
-  it falls back to lexical reranking. Lexical reranking is weaker than a trained model.
+  it falls back to lexical reranking. Whether a cross-encoder improves ranking must be
+  measured on the actual corpus rather than assumed.
 - Deterministic query processing is on; optional LLM rewriting remains off by default
   because it adds latency and model-dependent variability.
 - Context-window budgeting uses an approximate four-characters-per-token conversion;

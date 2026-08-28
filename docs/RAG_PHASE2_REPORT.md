@@ -419,7 +419,8 @@ substituted for a production answer-quality benchmark.
 - Exact/semantic gate thresholds are corpus-dependent and are not calibrated
   probabilities.
 - Near-duplicate detection is lexical. Paraphrased duplicate passages may both remain.
-- A cross-encoder must be cached/downloaded to improve beyond lexical reranking.
+- A cross-encoder must be cached/downloaded before its effect can be evaluated; this
+  run measured lexical reranking only, so no cross-encoder benefit is claimed.
 - Existing indexes need explicit re-indexing for schema-v2 chunks; silent bulk migration
   was intentionally avoided.
 - Developer mode is appropriate only for the current single-user local deployment. It
