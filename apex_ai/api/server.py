@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from apex_ai import APP_NAME, __version__
 from apex_ai.api.chat import GenerationManager, create_chat_router
+from apex_ai.api.memory import create_memory_router
 from apex_ai.api.uploads import create_upload_router
 from apex_ai.core.errors import ApexError
 from apex_ai.memory.conversations import ConversationStore
@@ -187,6 +188,7 @@ def create_api(
                 raise HTTPException(status_code=500, detail=error.user_message()) from error
 
     app.include_router(create_upload_router(services))
+    app.include_router(create_memory_router(services))
     app.include_router(create_chat_router(services, conversations, app.state.generations))
 
     @app.delete("/conversations")

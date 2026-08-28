@@ -20,6 +20,7 @@ from typing import Any
 from apex_ai.config.settings import Settings, with_overrides
 from apex_ai.core.errors import ApexError
 from apex_ai.core.logging import get_logger, setup_logging
+from apex_ai.memory.confirmation import MemoryConfirmationService
 from apex_ai.memory.conversation import ConversationMemory
 from apex_ai.memory.extraction import MemoryCandidateExtractor
 from apex_ai.memory.long_term import LongTermMemoryStore
@@ -48,6 +49,7 @@ class ApexServices:
     long_term_memory: LongTermMemoryStore | None = None
     memory_safety: MemorySafetyPolicy | None = None
     memory_extractor: MemoryCandidateExtractor | None = None
+    memory_confirmation: MemoryConfirmationService | None = None
     query_processor: Any = None
     engine: RagEngine | None = None
     models: ModelManager | None = None
@@ -97,11 +99,12 @@ def build_services(
     settings = settings or load_settings()
     setup_logging(settings.log_dir)
     memory_safety = MemorySafetyPolicy()
+    memory_extractor = MemoryCandidateExtractor(memory_safety)
     services = ApexServices(
         settings=settings,
         models=ModelManager(settings),
         memory_safety=memory_safety,
-        memory_extractor=MemoryCandidateExtractor(memory_safety),
+        memory_extractor=memory_extractor,
     )
 
     # Long-term memory is a separate optional persistence boundary. Phase 42
@@ -114,6 +117,10 @@ def build_services(
         )
         item_count = long_term_memory.count()
         services.long_term_memory = long_term_memory
+        services.memory_confirmation = MemoryConfirmationService(
+            memory_extractor,
+            long_term_memory,
+        )
         log.info("Long-term memory store ready: %d item(s)", item_count)
         if long_term_memory.removed_unsafe_on_startup:
             log.warning(

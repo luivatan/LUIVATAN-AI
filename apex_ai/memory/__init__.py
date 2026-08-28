@@ -1,3 +1,4 @@
+from apex_ai.memory.confirmation import MemoryConfirmationService
 from apex_ai.memory.context import ConversationContext, build_conversation_context
 from apex_ai.memory.conversation import ConversationMemory
 from apex_ai.memory.conversations import (
@@ -7,7 +8,7 @@ from apex_ai.memory.conversations import (
     Message,
 )
 from apex_ai.memory.extraction import MemoryCandidate, MemoryCandidateExtractor
-from apex_ai.memory.long_term import LongTermMemory, LongTermMemoryStore
+from apex_ai.memory.long_term import LongTermMemory, LongTermMemoryStore, PendingMemory
 
 __all__ = [
     "Conversation",
@@ -19,6 +20,8 @@ __all__ = [
     "LongTermMemoryStore",
     "MemoryCandidate",
     "MemoryCandidateExtractor",
+    "MemoryConfirmationService",
     "Message",
+    "PendingMemory",
     "build_conversation_context",
 ]

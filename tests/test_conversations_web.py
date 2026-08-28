@@ -11,7 +11,10 @@ from tests.conftest import DATA_DIR, FakeLLM
 
 @pytest.fixture()
 def web_services(settings, ingestion, embeddings, store):
+    from apex_ai.memory.confirmation import MemoryConfirmationService
     from apex_ai.memory.conversation import ConversationMemory
+    from apex_ai.memory.extraction import MemoryCandidateExtractor
+    from apex_ai.memory.long_term import LongTermMemoryStore
     from apex_ai.models.manager import ModelManager
     from apex_ai.rag.engine import RagEngine
     from apex_ai.rag.query_processing import QueryProcessor
@@ -19,12 +22,23 @@ def web_services(settings, ingestion, embeddings, store):
     from apex_ai.retrieval.pipeline import HybridRetriever
     from apex_ai.retrieval.reranker import LexicalReranker
     from apex_ai.runtime import ApexServices
+    from apex_ai.security.memory import MemorySafetyPolicy
 
     ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
     retriever = HybridRetriever(store, settings, BM25Index(store))
     memory = ConversationMemory(settings.memory_path, settings.memory_turns)
     query_processor = QueryProcessor(enabled=False)
     reranker = LexicalReranker()
+    memory_safety = MemorySafetyPolicy()
+    memory_extractor = MemoryCandidateExtractor(memory_safety)
+    long_term_memory = LongTermMemoryStore(
+        settings.long_term_memory_db_path,
+        safety_policy=memory_safety,
+    )
+    memory_confirmation = MemoryConfirmationService(
+        memory_extractor,
+        long_term_memory,
+    )
     engine = RagEngine(
         settings=settings,
         store=store,
@@ -42,6 +56,10 @@ def web_services(settings, ingestion, embeddings, store):
         retriever=retriever,
         reranker=reranker,
         memory=memory,
+        long_term_memory=long_term_memory,
+        memory_safety=memory_safety,
+        memory_extractor=memory_extractor,
+        memory_confirmation=memory_confirmation,
         query_processor=query_processor,
         engine=engine,
         models=ModelManager(settings),
@@ -61,6 +79,10 @@ def web_client(web_services):
 
 def events(response):
     return [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+
+def _fake_memory_key() -> str:
+    return "sk-" + ("Qw8_" * 8)
 
 
 # -- persistent conversation data --------------------------------------------
@@ -114,6 +136,7 @@ def test_web_shell_is_chat_first_and_has_security_headers(web_client):
     assert "Message Apex AI" in response.text
     assert "Documents" in response.text
     assert "Settings" in response.text
+    assert "memoryConfirmationRegion" in response.text
     assert "dashboard" not in response.text.lower()
     assert "default-src 'self'" in response.headers["content-security-policy"]
 
@@ -128,6 +151,9 @@ def test_static_assets_include_responsive_themes_and_code_blocks(web_client):
     assert "renderMarkdown" in javascript.text
     assert "navigator.clipboard" in javascript.text
     assert 'regenerate: true' in javascript.text
+    assert ".memory-confirmation-card" in css.text
+    assert "/memory/candidates/" in javascript.text
+    assert "Review first · never save secrets" in javascript.text
 
 
 def test_streaming_chat_uses_real_engine_and_persists_verified_citations(web_client):
@@ -149,6 +175,152 @@ def test_streaming_chat_uses_real_engine_and_persists_verified_citations(web_cli
     saved = web_client.get(f"/conversations/{conversation_id}").json()
     assert [message["role"] for message in saved["messages"]] == ["user", "assistant"]
     assert saved["messages"][1]["citations"] == final["citations"]
+
+
+def test_memory_candidate_requires_approval_and_is_not_prompted(
+    web_client, web_services
+):
+    preference = "I prefer concise answers."
+    stream = events(
+        web_client.post(
+            "/chat/stream",
+            json={
+                "question": preference + " What temperature is a fever in adults?",
+                "request_id": "memory-approval",
+            },
+        )
+    )
+    proposal = stream[0]["memory_candidates"][0]
+
+    assert proposal["content"] == preference
+    assert web_services.long_term_memory.count() == 0
+    assert web_client.get("/memory/candidates").json() == [proposal]
+
+    approved = web_client.post(
+        f"/memory/candidates/{proposal['id']}/approve"
+    )
+
+    assert approved.status_code == 200
+    assert approved.json()["memory"]["content"] == preference
+    assert web_services.long_term_memory.count() == 1
+    assert web_client.get("/memory/candidates").json() == []
+
+    follow_up = web_client.post(
+        "/chat/stream",
+        json={
+            "question": "What temperature is a fever in adults?",
+            "request_id": "memory-not-in-prompt",
+        },
+    )
+    assert follow_up.status_code == 200
+    assert preference not in repr(FakeLLM.last_messages)
+
+
+def test_memory_candidate_can_be_rejected_without_storing_content(
+    web_client, web_services
+):
+    question = (
+        "Please always include exact version numbers. "
+        "What temperature is a fever in adults?"
+    )
+    first = events(
+        web_client.post(
+            "/chat/stream",
+            json={"question": question, "request_id": "memory-reject"},
+        )
+    )
+    proposal = first[0]["memory_candidates"][0]
+
+    rejected = web_client.post(
+        f"/memory/candidates/{proposal['id']}/reject"
+    )
+
+    assert rejected.status_code == 200
+    assert rejected.json() == {"rejected": True}
+    assert web_services.long_term_memory.count() == 0
+    assert web_client.get("/memory/candidates").json() == []
+
+    repeated = events(
+        web_client.post(
+            "/chat/stream",
+            json={"question": question, "request_id": "memory-repeated"},
+        )
+    )
+    assert repeated[0]["memory_candidates"] == []
+
+
+def test_unsafe_memory_candidate_is_never_offered(web_client, web_services):
+    question = (
+        "Remember that my API key is "
+        + _fake_memory_key()
+        + ". What temperature is a fever in adults?"
+    )
+
+    stream = events(
+        web_client.post(
+            "/chat/stream",
+            json={"question": question, "request_id": "unsafe-memory"},
+        )
+    )
+
+    assert stream[0]["memory_candidates"] == []
+    assert web_services.long_term_memory.pending() == []
+    assert web_services.long_term_memory.count() == 0
+
+
+def test_candidate_failure_does_not_interrupt_chat(
+    web_client, web_services, monkeypatch
+):
+    def fail_safely(user_message):
+        raise RuntimeError("simulated candidate failure")
+
+    monkeypatch.setattr(
+        web_services.memory_confirmation,
+        "propose_from_user_message",
+        fail_safely,
+    )
+    stream = events(
+        web_client.post(
+            "/chat/stream",
+            json={
+                "question": "What temperature is a fever in adults?",
+                "request_id": "candidate-failure",
+            },
+        )
+    )
+
+    assert stream[0]["memory_candidates"] == []
+    assert stream[-1]["type"] == "final"
+
+
+def test_regeneration_never_creates_a_second_memory_proposal(web_client):
+    initial = events(
+        web_client.post(
+            "/chat/stream",
+            json={
+                "question": (
+                    "I prefer concise answers. "
+                    "What temperature is a fever in adults?"
+                ),
+                "request_id": "proposal-initial",
+            },
+        )
+    )
+    conversation_id = initial[0]["conversation"]["id"]
+    assert len(initial[0]["memory_candidates"]) == 1
+
+    regenerated = events(
+        web_client.post(
+            "/chat/stream",
+            json={
+                "conversation_id": conversation_id,
+                "request_id": "proposal-regenerate",
+                "regenerate": True,
+            },
+        )
+    )
+
+    assert regenerated[0]["memory_candidates"] == []
 
 
 def test_second_conversation_and_history_are_real_records(web_client):

@@ -186,6 +186,21 @@ html[data-theme="light"] .moon-icon { display: block; }
 .error-message { border: 1px solid rgba(241,120,120,.28); background: rgba(241,120,120,.07); color: var(--text-2); border-radius: 10px; padding: 11px 13px; white-space: pre-wrap; font-size: 12px; line-height: 1.5; }
 
 .composer-region { position: absolute; z-index: 15; bottom: 0; left: 0; right: 0; padding: 28px max(22px, calc((100% - 820px)/2)) 14px; background: linear-gradient(to bottom, transparent, var(--bg) 25%, var(--bg)); }
+.memory-confirmation-region { display: none; gap: 8px; overflow-x: auto; padding: 4px 2px 9px; scrollbar-width: thin; }
+.memory-confirmation-region.has-items { display: flex; }
+.memory-confirmation-card { flex: 1 0 min(100%, 390px); min-width: 280px; max-width: 440px; border: 1px solid rgba(139,124,255,.35); border-radius: 12px; background: color-mix(in srgb, var(--surface) 92%, var(--accent)); box-shadow: 0 9px 30px rgba(0,0,0,.16); padding: 11px 12px; }
+.memory-confirmation-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 5px; }
+.memory-confirmation-heading strong { font-size: 11px; }
+.memory-confirmation-kind { color: var(--accent); font-size: 8px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.memory-confirmation-content { margin: 0; color: var(--text-2); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.memory-confirmation-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 9px; }
+.memory-confirmation-warning { color: var(--text-3); font-size: 8.5px; }
+.memory-confirmation-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.memory-confirmation-action { height: 28px; border-radius: 7px; padding: 0 9px; font-size: 9.5px; font-weight: 700; }
+.memory-confirmation-action.reject { border: 1px solid var(--border); background: transparent; color: var(--text-2); }
+.memory-confirmation-action.approve { border: 0; background: var(--accent); color: white; }
+.memory-confirmation-action:disabled { opacity: .55; cursor: wait; }
+#chatView:has(.memory-confirmation-region.has-items) .messages-scroll { padding-bottom: 270px; }
 .attachment-tray { display: none; gap: 7px; overflow-x: auto; padding: 4px 2px 8px; }
 .attachment-tray.has-files { display: flex; }
 .attachment-chip { flex: 0 0 auto; max-width: 220px; height: 38px; border: 1px solid var(--border); background: var(--surface); border-radius: 9px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; font-size: 11px; }

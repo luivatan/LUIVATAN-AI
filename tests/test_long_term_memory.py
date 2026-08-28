@@ -121,4 +121,5 @@ def test_optional_memory_failure_does_not_break_core_runtime(settings, monkeypat
     assert services.engine is not None
     assert services.ingestion is not None
     assert services.long_term_memory is None
+    assert services.memory_confirmation is None
     assert "long_term_memory_error" in services._extras

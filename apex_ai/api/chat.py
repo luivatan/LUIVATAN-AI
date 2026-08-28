@@ -196,6 +196,21 @@ def create_chat_router(
                 generations.unregister(request_id)
                 raise
 
+        memory_candidates: list[dict] = []
+        if not payload.regenerate and services.memory_confirmation is not None:
+            try:
+                memory_candidates = [
+                    item.to_dict()
+                    for item in services.memory_confirmation.propose_from_user_message(
+                        question
+                    )
+                ]
+            except Exception as error:  # noqa: BLE001 - optional memory boundary
+                log.warning(
+                    "Memory candidate preparation failed; chat will continue (%s)",
+                    type(error).__name__,
+                )
+
         def generate() -> Iterator[bytes]:
             parts: list[str] = []
             persisted = False
@@ -209,6 +224,7 @@ def create_chat_router(
                     conversation=conversations.get(conversation.id).to_dict(),
                     user_message=pending_user.to_dict(),
                     regenerate=payload.regenerate,
+                    memory_candidates=memory_candidates,
                 )
                 memory = ConversationMemoryAdapter(
                     conversations,

@@ -1,17 +1,17 @@
-"""Separate persistence for explicit long-term preferences and ongoing context.
+"""Separate persistence for long-term memory and pending confirmations.
 
-Phase 42 intentionally provides storage only. It does not extract memories from
-chat, write automatically, inject records into prompts, or expose management UI;
-those behaviors belong to later roadmap phases and require separate safety and
-confirmation work.
+Confirmed preferences/context enter ``long_term_memories`` only through explicit
+creation or approval. Safe chat candidates may wait briefly in the independent
+pending table, but neither pending nor confirmed records are prompt context here.
 """
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -19,14 +19,20 @@ from apex_ai.core.errors import DatabaseError
 from apex_ai.security.memory import MemorySafetyPolicy
 
 ALLOWED_MEMORY_KINDS = frozenset({"preference", "ongoing_context"})
+PENDING_MEMORY_DAYS = 7
+_PROPOSAL_ID = re.compile(r"^memcand_[0-9a-f]{24}$")
+
+
+def _timestamp(value: datetime) -> str:
+    return value.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _now() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .isoformat(timespec="microseconds")
-        .replace("+00:00", "Z")
-    )
+    return _timestamp(datetime.now(timezone.utc))
+
+
+def _expires_at() -> str:
+    return _timestamp(datetime.now(timezone.utc) + timedelta(days=PENDING_MEMORY_DAYS))
 
 
 def _validate_kind(kind: str) -> str:
@@ -42,6 +48,24 @@ def _validate_content(content: str) -> str:
     if not clean:
         raise ValueError("Memory content cannot be empty.")
     return clean
+
+
+def _validate_proposal_id(proposal_id: str) -> str:
+    clean = str(proposal_id or "").strip()
+    if not _PROPOSAL_ID.fullmatch(clean):
+        raise ValueError("Invalid memory proposal ID.")
+    return clean
+
+
+def _validate_rule(rule: str) -> str:
+    clean = str(rule or "").strip()
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", clean):
+        raise ValueError("Invalid memory proposal rule.")
+    return clean
+
+
+def _equivalent_content(first: str, second: str) -> bool:
+    return " ".join(first.split()).casefold() == " ".join(second.split()).casefold()
 
 
 @dataclass(frozen=True)
@@ -62,6 +86,26 @@ class LongTermMemory:
         }
 
 
+@dataclass(frozen=True)
+class PendingMemory:
+    id: str
+    kind: str
+    content: str
+    rule: str
+    created_at: str
+    expires_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "content": self.content,
+            "rule": self.rule,
+            "created_at": self.created_at,
+            "expires_at": self.expires_at,
+        }
+
+
 class LongTermMemoryStore:
     """SQLite CRUD foundation, intentionally disconnected from model prompts."""
 
@@ -74,10 +118,12 @@ class LongTermMemoryStore:
         self.path = Path(path)
         self.safety_policy = safety_policy or MemorySafetyPolicy()
         self.removed_unsafe_on_startup = 0
+        self.expired_proposals_on_startup = 0
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._initialize()
             self.removed_unsafe_on_startup = self._remove_unsafe_existing()
+            self.expired_proposals_on_startup = self._delete_expired_proposals()
         except DatabaseError:
             raise
         except (OSError, sqlite3.Error) as error:
@@ -109,6 +155,26 @@ class LongTermMemoryStore:
                         ON long_term_memories(updated_at DESC, id DESC);
                     CREATE INDEX IF NOT EXISTS idx_long_term_memories_kind
                         ON long_term_memories(kind, updated_at DESC, id DESC);
+
+                    CREATE TABLE IF NOT EXISTS pending_memories (
+                        id TEXT PRIMARY KEY,
+                        kind TEXT NOT NULL
+                            CHECK(kind IN ('preference','ongoing_context')),
+                        content TEXT NOT NULL,
+                        rule TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        expires_at TEXT NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_pending_memories_expiry
+                        ON pending_memories(expires_at, created_at, id);
+
+                    CREATE TABLE IF NOT EXISTS memory_candidate_decisions (
+                        candidate_id TEXT PRIMARY KEY,
+                        decision TEXT NOT NULL
+                            CHECK(decision IN ('approved','rejected')),
+                        memory_id TEXT,
+                        decided_at TEXT NOT NULL
+                    );
                     """
                 )
         except sqlite3.Error as error:
@@ -118,22 +184,242 @@ class LongTermMemoryStore:
         """Delete recognized unsafe legacy rows without exposing their content."""
         try:
             with self._connect() as connection:
-                rows = connection.execute(
+                memory_rows = connection.execute(
                     "SELECT id,content FROM long_term_memories"
                 ).fetchall()
-                unsafe_ids = [
+                proposal_rows = connection.execute(
+                    "SELECT id,content FROM pending_memories"
+                ).fetchall()
+                unsafe_memory_ids = [
                     (row["id"],)
-                    for row in rows
+                    for row in memory_rows
                     if not self.safety_policy.inspect(row["content"]).safe
                 ]
-                if unsafe_ids:
+                unsafe_proposal_ids = [
+                    (row["id"],)
+                    for row in proposal_rows
+                    if not self.safety_policy.inspect(row["content"]).safe
+                ]
+                if unsafe_memory_ids:
                     connection.executemany(
                         "DELETE FROM long_term_memories WHERE id=?",
-                        unsafe_ids,
+                        unsafe_memory_ids,
                     )
-                return len(unsafe_ids)
+                if unsafe_proposal_ids:
+                    connection.executemany(
+                        "DELETE FROM pending_memories WHERE id=?",
+                        unsafe_proposal_ids,
+                    )
+                return len(unsafe_memory_ids) + len(unsafe_proposal_ids)
         except sqlite3.Error as error:
             raise self._error("apply safety checks to", error) from error
+
+    def _delete_expired_proposals(self) -> int:
+        try:
+            with self._connect() as connection:
+                cursor = connection.execute(
+                    "DELETE FROM pending_memories WHERE expires_at<=?",
+                    (_now(),),
+                )
+                return max(0, cursor.rowcount)
+        except sqlite3.Error as error:
+            raise self._error("expire pending", error) from error
+
+    def propose_candidate(
+        self,
+        proposal_id: str,
+        *,
+        content: str,
+        kind: str,
+        rule: str,
+    ) -> PendingMemory | None:
+        """Persist a safe proposal, never a confirmed memory, for user review."""
+        clean_id = _validate_proposal_id(proposal_id)
+        clean_content = _validate_content(content)
+        clean_kind = _validate_kind(kind)
+        clean_rule = _validate_rule(rule)
+        self.safety_policy.require_safe(clean_content)
+        self._delete_expired_proposals()
+        now = _now()
+        expires_at = _expires_at()
+        try:
+            with self._connect() as connection:
+                decision = connection.execute(
+                    "SELECT 1 FROM memory_candidate_decisions WHERE candidate_id=?",
+                    (clean_id,),
+                ).fetchone()
+                if decision is not None:
+                    return None
+
+                existing_memories = connection.execute(
+                    "SELECT id,content FROM long_term_memories WHERE kind=?",
+                    (clean_kind,),
+                ).fetchall()
+                for memory in existing_memories:
+                    if _equivalent_content(memory["content"], clean_content):
+                        connection.execute(
+                            """INSERT OR REPLACE INTO memory_candidate_decisions
+                               (candidate_id,decision,memory_id,decided_at)
+                               VALUES (?,'approved',?,?)""",
+                            (clean_id, memory["id"], now),
+                        )
+                        return None
+
+                existing = connection.execute(
+                    "SELECT * FROM pending_memories WHERE id=?",
+                    (clean_id,),
+                ).fetchone()
+                if existing is not None:
+                    proposal = self._pending_record(existing)
+                    if (
+                        proposal.kind != clean_kind
+                        or not _equivalent_content(proposal.content, clean_content)
+                        or proposal.rule != clean_rule
+                    ):
+                        raise ValueError(
+                            "Memory proposal ID conflicts with existing data."
+                        )
+                    return proposal
+
+                connection.execute(
+                    """INSERT INTO pending_memories
+                       (id,kind,content,rule,created_at,expires_at)
+                       VALUES (?,?,?,?,?,?)""",
+                    (clean_id, clean_kind, clean_content, clean_rule, now, expires_at),
+                )
+        except sqlite3.Error as error:
+            raise self._error("create a pending", error) from error
+        return PendingMemory(
+            clean_id,
+            clean_kind,
+            clean_content,
+            clean_rule,
+            now,
+            expires_at,
+        )
+
+    def pending(self, *, limit: int = 100) -> list[PendingMemory]:
+        limit = max(1, min(int(limit), 500))
+        self._remove_unsafe_existing()
+        self._delete_expired_proposals()
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """SELECT * FROM pending_memories
+                       ORDER BY created_at ASC,id ASC LIMIT ?""",
+                    (limit,),
+                ).fetchall()
+        except sqlite3.Error as error:
+            raise self._error("list pending", error) from error
+        return [self._pending_record(row) for row in rows]
+
+    def approve_candidate(self, proposal_id: str) -> LongTermMemory:
+        """Move one still-safe proposal to confirmed memory atomically."""
+        clean_id = _validate_proposal_id(proposal_id)
+        self._delete_expired_proposals()
+        now = _now()
+        blocked_content: str | None = None
+        memory: LongTermMemory | None = None
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT * FROM pending_memories WHERE id=?",
+                    (clean_id,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(clean_id)
+                proposal = self._pending_record(row)
+                safety = self.safety_policy.inspect(proposal.content)
+                if not safety.safe:
+                    connection.execute(
+                        "DELETE FROM pending_memories WHERE id=?",
+                        (clean_id,),
+                    )
+                    connection.execute(
+                        """INSERT OR REPLACE INTO memory_candidate_decisions
+                           (candidate_id,decision,memory_id,decided_at)
+                           VALUES (?,'rejected',NULL,?)""",
+                        (clean_id, now),
+                    )
+                    blocked_content = proposal.content
+                else:
+                    existing_rows = connection.execute(
+                        "SELECT * FROM long_term_memories WHERE kind=?",
+                        (proposal.kind,),
+                    ).fetchall()
+                    memory = next(
+                        (
+                            self._record(item)
+                            for item in existing_rows
+                            if _equivalent_content(item["content"], proposal.content)
+                        ),
+                        None,
+                    )
+                    if memory is None:
+                        memory = LongTermMemory(
+                            id=str(uuid.uuid4()),
+                            kind=proposal.kind,
+                            content=proposal.content,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                        connection.execute(
+                            """INSERT INTO long_term_memories
+                               (id,kind,content,created_at,updated_at)
+                               VALUES (?,?,?,?,?)""",
+                            (
+                                memory.id,
+                                memory.kind,
+                                memory.content,
+                                memory.created_at,
+                                memory.updated_at,
+                            ),
+                        )
+                    connection.execute(
+                        "DELETE FROM pending_memories WHERE id=?",
+                        (clean_id,),
+                    )
+                    connection.execute(
+                        """INSERT OR REPLACE INTO memory_candidate_decisions
+                           (candidate_id,decision,memory_id,decided_at)
+                           VALUES (?,'approved',?,?)""",
+                        (clean_id, memory.id, now),
+                    )
+        except sqlite3.Error as error:
+            raise self._error("approve pending", error) from error
+
+        if blocked_content is not None:
+            self.safety_policy.require_safe(blocked_content)
+        if memory is None:  # pragma: no cover - guarded by the branches above
+            raise RuntimeError("Memory approval produced no result.")
+        return memory
+
+    def reject_candidate(self, proposal_id: str) -> bool:
+        """Delete pending content and retain only its content-derived ID tombstone."""
+        clean_id = _validate_proposal_id(proposal_id)
+        self._delete_expired_proposals()
+        now = _now()
+        try:
+            with self._connect() as connection:
+                exists = connection.execute(
+                    "SELECT 1 FROM pending_memories WHERE id=?",
+                    (clean_id,),
+                ).fetchone()
+                if exists is None:
+                    return False
+                connection.execute(
+                    "DELETE FROM pending_memories WHERE id=?",
+                    (clean_id,),
+                )
+                connection.execute(
+                    """INSERT OR REPLACE INTO memory_candidate_decisions
+                       (candidate_id,decision,memory_id,decided_at)
+                       VALUES (?,'rejected',NULL,?)""",
+                    (clean_id, now),
+                )
+                return True
+        except sqlite3.Error as error:
+            raise self._error("reject pending", error) from error
 
     def create(self, content: str, *, kind: str) -> LongTermMemory:
         """Persist one explicit memory; callers must choose its declared kind."""
@@ -274,6 +560,17 @@ class LongTermMemoryStore:
                 return int(row[0])
         except sqlite3.Error as error:
             raise self._error("count", error) from error
+
+    @staticmethod
+    def _pending_record(row: sqlite3.Row) -> PendingMemory:
+        return PendingMemory(
+            id=row["id"],
+            kind=row["kind"],
+            content=row["content"],
+            rule=row["rule"],
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
+        )
 
     @staticmethod
     def _record(row: sqlite3.Row) -> LongTermMemory:

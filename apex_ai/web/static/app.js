@@ -5,6 +5,7 @@ const state = {
   conversations: [],
   messages: [],
   pendingFiles: [],
+  memoryCandidates: [],
   generating: false,
   stopping: false,
   requestId: null,
@@ -113,6 +114,60 @@ function toast(message, type = "") {
   item.textContent = message;
   $("#toastRegion").append(item);
   setTimeout(() => item.remove(), 4200);
+}
+
+function mergeMemoryCandidates(candidates = []) {
+  const byId = new Map(state.memoryCandidates.map(item => [item.id, item]));
+  candidates.forEach(item => { if (item && item.id) byId.set(item.id, item); });
+  state.memoryCandidates = [...byId.values()];
+  renderMemoryCandidates();
+}
+
+function renderMemoryCandidates() {
+  const region = $("#memoryConfirmationRegion");
+  region.replaceChildren();
+  region.classList.toggle("has-items", state.memoryCandidates.length > 0);
+  state.memoryCandidates.forEach(candidate => {
+    const card = document.createElement("section");
+    card.className = "memory-confirmation-card";
+    card.dataset.candidateId = candidate.id;
+    const heading = document.createElement("div"); heading.className = "memory-confirmation-heading";
+    const title = document.createElement("strong"); title.textContent = "Save this to long-term memory?";
+    const kind = document.createElement("span"); kind.className = "memory-confirmation-kind"; kind.textContent = candidate.kind === "preference" ? "Preference" : "Ongoing context";
+    heading.append(title, kind);
+    const content = document.createElement("p"); content.className = "memory-confirmation-content"; content.textContent = candidate.content;
+    const footer = document.createElement("div"); footer.className = "memory-confirmation-footer";
+    const warning = document.createElement("span"); warning.className = "memory-confirmation-warning"; warning.textContent = "Review first · never save secrets";
+    const actions = document.createElement("div"); actions.className = "memory-confirmation-actions";
+    const reject = document.createElement("button"); reject.type = "button"; reject.className = "memory-confirmation-action reject"; reject.textContent = "Don't save";
+    const approve = document.createElement("button"); approve.type = "button"; approve.className = "memory-confirmation-action approve"; approve.textContent = "Remember";
+    reject.addEventListener("click", () => decideMemoryCandidate(candidate.id, "reject"));
+    approve.addEventListener("click", () => decideMemoryCandidate(candidate.id, "approve"));
+    actions.append(reject, approve); footer.append(warning, actions); card.append(heading, content, footer); region.append(card);
+  });
+}
+
+async function decideMemoryCandidate(candidateId, decision) {
+  const card = $(`[data-candidate-id="${CSS.escape(candidateId)}"]`, $("#memoryConfirmationRegion"));
+  if (card) $$('button', card).forEach(button => { button.disabled = true; });
+  try {
+    await api(`/memory/candidates/${encodeURIComponent(candidateId)}/${decision}`, { method: "POST" });
+    state.memoryCandidates = state.memoryCandidates.filter(item => item.id !== candidateId);
+    renderMemoryCandidates();
+    toast(decision === "approve" ? "Saved to long-term memory; prompt use is not enabled yet." : "Memory suggestion dismissed.", "success");
+  } catch (error) {
+    toast(error.message, "error");
+    await loadMemoryCandidates();
+  }
+}
+
+async function loadMemoryCandidates() {
+  try {
+    state.memoryCandidates = await api("/memory/candidates");
+  } catch (_) {
+    state.memoryCandidates = [];
+  }
+  renderMemoryCandidates();
 }
 
 function formatDate(value) {
@@ -438,6 +493,7 @@ function handleStreamEvent(event) {
   if (event.type === "meta") {
     state.currentConversation = event.conversation;
     $("#topbarTitle").textContent = event.conversation.title;
+    mergeMemoryCandidates(event.memory_candidates || []);
     return;
   }
   if (event.type === "token") { state.activeAssistant.content += event.text; updateStreamingMarkdown(); return; }
@@ -598,7 +654,12 @@ function bindEvents() {
 
 async function initialize() {
   setTheme(state.preferences.theme); bindEvents(); renderMessages(); updateSendState();
-  await Promise.all([loadConfig(), loadConversations(), loadDocuments()]);
+  await Promise.all([
+    loadConfig(),
+    loadConversations(),
+    loadDocuments(),
+    loadMemoryCandidates(),
+  ]);
   await loadModels();
 }
 

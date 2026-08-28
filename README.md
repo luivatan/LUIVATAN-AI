@@ -54,9 +54,12 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   never treated as document evidence and can never be cited.
 - **Separate long-term-memory foundation** — explicit preferences and ongoing context have
   an independent SQLite store, isolated from conversations and document evidence.
-- **Conservative memory candidates** — a deterministic, offline extractor can identify
+- **Conservative memory candidates** — new browser-chat messages are checked locally for
   only explicitly signaled preference/ongoing-context candidates while preserving exact
-  terms. It does not run automatically or persist candidates.
+  terms. Safe candidates remain pending and expire; they are not confirmed memories.
+- **Explicit memory confirmation** — an accessible card lets the user choose **Remember**
+  or **Don't save**. Only approval atomically moves pending text into long-term memory;
+  confirmed memory is still not injected into prompts until relevance retrieval exists.
 - **Memory safety at the storage boundary** — candidates and every long-term-memory
   create/update are screened locally for labeled credentials, known token/key formats,
   likely opaque secrets, and unnecessary sensitive identifiers. Findings never echo the
@@ -153,8 +156,9 @@ Open **http://127.0.0.1:7860**. The main screen is the chat interface. Select a 
 in the header, attach or drag in documents, send a question, and expand the returned
 source chips to inspect the exact evidence. Conversations are real persisted records in
 `data/conversations.db`; **New chat**, history search, rename, delete, regenerate, and
-stop all operate on that store. The independent Phase 42 persistence foundation lives in
-`data/long_term_memory.db`; it is not read by chat generation or populated from chat yet.
+stop all operate on that store. The independent memory foundation lives in
+`data/long_term_memory.db`; it contains short-lived safe proposals and explicitly approved
+records, but neither is read by chat generation yet.
 
 The same process exposes API documentation at **`/api/docs`**. You can also use:
 
@@ -171,9 +175,11 @@ flow. The Phase 41 short-term-history audit and design are documented in
 separate Phase 42 persistence boundary and its deliberate non-goals are documented in
 [`docs/PHASE42_LONG_TERM_MEMORY.md`](docs/PHASE42_LONG_TERM_MEMORY.md); Phase 43's
 conservative, zero-write candidate extractor is covered in
-[`docs/PHASE43_MEMORY_EXTRACTION.md`](docs/PHASE43_MEMORY_EXTRACTION.md), and Phase 44's
+[`docs/PHASE43_MEMORY_EXTRACTION.md`](docs/PHASE43_MEMORY_EXTRACTION.md), Phase 44's
 storage-boundary safety policy in
-[`docs/PHASE44_MEMORY_SAFETY.md`](docs/PHASE44_MEMORY_SAFETY.md).
+[`docs/PHASE44_MEMORY_SAFETY.md`](docs/PHASE44_MEMORY_SAFETY.md), and the explicit Phase
+45 approval/rejection flow in
+[`docs/PHASE45_MEMORY_CONFIRMATION.md`](docs/PHASE45_MEMORY_CONFIRMATION.md).
 
 ### Web endpoints used by the interface
 
@@ -183,6 +189,8 @@ storage-boundary safety policy in
 | `POST /chat/stop` | cooperative cancellation at the next provider token |
 | `GET/POST /conversations` | history/search and New Chat records |
 | `GET/PATCH/DELETE /conversations/{id}` | load, rename, or delete a conversation |
+| `GET /memory/candidates` | safe pending suggestions awaiting a user decision |
+| `POST /memory/candidates/{id}/approve` or `/reject` | explicit confirmation decision |
 | `POST /documents/upload` | bounded multipart upload into existing ingestion |
 | `GET/DELETE /documents/{id}` | knowledge-base display/removal |
 | `POST /documents/{id}/reindex` | rerun existing extraction/chunk/embed pipeline |

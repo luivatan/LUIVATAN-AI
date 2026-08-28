@@ -142,6 +142,14 @@ def test_models_endpoint_lists_discovered(api_client):
     assert api_client.get("/models").status_code == 200
 
 
+def test_memory_confirmation_endpoint_degrades_when_optional_store_is_unavailable(
+    api_client,
+):
+    response = api_client.get("/memory/candidates")
+    assert response.status_code == 503
+    assert "Core chat remains available" in response.json()["detail"]
+
+
 def test_rag_debug_route_does_not_exist_for_normal_users(api_client):
     response = api_client.post("/debug/rag", json={"question": "fever"})
     assert response.status_code == 404
