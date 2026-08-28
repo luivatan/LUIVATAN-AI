@@ -70,6 +70,9 @@ class Settings:
     log_dir: Path = field(default_factory=lambda: resolve_path("logs"))
     cache_dir: Path = field(default_factory=lambda: resolve_path("data/cache"))
     memory_path: Path = field(default_factory=lambda: resolve_path("data/conversation_memory.json"))
+    conversation_db_path: Path = field(
+        default_factory=lambda: resolve_path("data/conversations.db")
+    )
 
     # --- embeddings ---------------------------------------------------
     embedding_model: str = "all-MiniLM-L6-v2"
@@ -107,6 +110,9 @@ class Settings:
     # --- context / generation --------------------------------------------
     context_char_limit: int = 6000
     memory_turns: int = 8
+
+    # --- web application ---------------------------------------------------
+    max_upload_mb: int = 50
 
     # --- server ------------------------------------------------------------
     server_name: str = "0.0.0.0"
@@ -159,6 +165,9 @@ def load_settings() -> Settings:
         log_dir=resolve_path(_env("APEX_LOG_DIR", default="logs")),
         cache_dir=resolve_path(_env("APEX_CACHE_DIR", default="data/cache")),
         memory_path=resolve_path(_env("APEX_MEMORY_PATH", default="data/conversation_memory.json")),
+        conversation_db_path=resolve_path(
+            _env("APEX_CONVERSATION_DB_PATH", default="data/conversations.db")
+        ),
         embedding_model=_env("APEX_EMBEDDING_MODEL", default="all-MiniLM-L6-v2"),
         embedding_batch_size=_int(_env("APEX_EMBEDDING_BATCH_SIZE", default="32"), 32),
         llm_provider=_env("APEX_LLM_PROVIDER", "LLM_PROVIDER", default="llama_cpp").lower(),
@@ -186,6 +195,7 @@ def load_settings() -> Settings:
         medical_mode=_bool(_env("APEX_MEDICAL_MODE", default=""), True),
         context_char_limit=_int(_env("APEX_CONTEXT_CHAR_LIMIT", default="6000"), 6000),
         memory_turns=_int(_env("APEX_MEMORY_TURNS", default="8"), 8),
+        max_upload_mb=max(1, _int(_env("APEX_MAX_UPLOAD_MB", default="50"), 50)),
         server_name=_env("APEX_SERVER_NAME", default="0.0.0.0"),
         server_port=_int(_env("APEX_SERVER_PORT", default="7860"), 7860),
     )

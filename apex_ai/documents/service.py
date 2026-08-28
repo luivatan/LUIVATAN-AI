@@ -137,15 +137,12 @@ class IngestionService:
                 fix="Convert the file to a supported format and try again.",
             )
 
-        # Copy into the managed uploads dir (safe name, no path traversal).
+        # Hash before copying so a duplicate upload cannot overwrite a managed file.
+        # If two different files share a name, retain both with a short content-hash
+        # suffix instead of silently making the older registry entry point at new bytes.
         self.settings.upload_dir.mkdir(parents=True, exist_ok=True)
         safe_name = sanitize_filename(source.name)
-        destination = ensure_within(
-            self.settings.upload_dir, self.settings.upload_dir / safe_name
-        )
-        if source.resolve() != destination:
-            shutil.copy2(source, destination)
-        document_id = sha256_file(destination)
+        document_id = sha256_file(source)
 
         if not force and self.store.has_document(document_id):
             log.info("Duplicate upload skipped: %s (%s)", safe_name, document_id[:12])
@@ -156,6 +153,19 @@ class IngestionService:
                 message=f"'{safe_name}' is already indexed (identical file content). "
                         "Use Re-index to force a rebuild.",
             )
+
+        destination = ensure_within(
+            self.settings.upload_dir, self.settings.upload_dir / safe_name
+        )
+        if source.resolve() != destination and destination.exists():
+            if sha256_file(destination) != document_id:
+                destination = ensure_within(
+                    self.settings.upload_dir,
+                    self.settings.upload_dir
+                    / f"{destination.stem}-{document_id[:8]}{destination.suffix}",
+                )
+        if source.resolve() != destination:
+            shutil.copy2(source, destination)
 
         with timed(log, f"ingest {safe_name}", level=logging.INFO):
             document = extract_document(destination)

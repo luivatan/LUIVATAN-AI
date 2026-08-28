@@ -75,6 +75,7 @@ def settings(tmp_path) -> Settings:
         log_dir=tmp_path / "logs",
         cache_dir=tmp_path / "cache",
         memory_path=tmp_path / "memory.json",
+        conversation_db_path=tmp_path / "conversations.db",
         embedding_model="hashing-256-v1",
         top_k=6,
         rerank_top_k=3,

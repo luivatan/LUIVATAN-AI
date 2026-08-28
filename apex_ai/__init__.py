@@ -12,11 +12,12 @@ Package layout (each subpackage owns one responsibility):
 - ``vectordb``   ChromaDB persistence + document registry
 - ``retrieval``  hybrid retrieval (vector + BM25) and reranking
 - ``rag``        query processing, context building, grounded generation engine
-- ``memory``     conversation memory (kept strictly separate from document evidence)
-- ``ui``         Gradio interface
-- ``api``        FastAPI interface
+- ``memory``     conversation history/memory (strictly separate from document evidence)
+- ``web``        chat-first responsive browser application
+- ``ui``         preserved compatibility Gradio interface
+- ``api``        FastAPI, streaming chat, conversations, and document uploads
 - ``evaluation`` retrieval/answer metrics used by ``evaluate_rag.py``
 """
 
 APP_NAME = "Apex AI"
-__version__ = "1.0.0"
+__version__ = "1.1.0"

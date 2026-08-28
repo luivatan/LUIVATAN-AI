@@ -12,21 +12,22 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+node_modules/
 
 # --- models (NEVER commit model files) --------------------------------------
 *.gguf
 *.gguf.tmp
-models/
-!models/.gitkeep
+/models/*
+!/models/.gitkeep
 
 # --- runtime data ------------------------------------------------------------
-database/
-chroma/
-data/
-logs/
-cache/
-eval/reports/
-uploaded_pdfs/
+/database/
+/chroma/
+/data/
+/logs/
+/cache/
+/eval/reports/
+/uploaded_pdfs/
 
 # --- editor / tooling --------------------------------------------------------
 .continue/

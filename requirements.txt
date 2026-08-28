@@ -30,6 +30,7 @@ gradio>=5.0,<7           # main user interface
 fastapi>=0.110           # optional JSON API (already a Gradio dependency)
 uvicorn>=0.29            # runs the FastAPI app
 pydantic>=2.6            # request/response models
+python-multipart>=0.0.9  # streamed browser file uploads
 
 # --- configuration & utilities ----------------------------------------------
 python-dotenv>=1.0       # .env file loading

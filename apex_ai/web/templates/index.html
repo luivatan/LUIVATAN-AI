@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0b0d12">
+  <meta name="description" content="Apex AI — private, source-grounded intelligence for your documents.">
+  <title>Apex AI</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell" id="appShell">
+    <div class="mobile-backdrop" id="mobileBackdrop" aria-hidden="true"></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="Conversation navigation">
+      <div class="brand-row">
+        <button class="brand" data-view="chat" aria-label="Apex AI home">
+          <span class="brand-mark" aria-hidden="true">A</span>
+          <span class="brand-name">Apex <strong>AI</strong></span>
+        </button>
+        <button class="icon-button mobile-only" id="closeSidebar" aria-label="Close sidebar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+
+      <button class="new-chat-button" id="newChatButton">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span>New chat</span>
+        <kbd>⌘ K</kbd>
+      </button>
+
+      <div class="conversation-search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+        <input id="conversationSearch" type="search" placeholder="Search conversations" aria-label="Search conversations" autocomplete="off">
+        <span class="search-shortcut">⌘ F</span>
+      </div>
+
+      <div class="history-label">
+        <span>Conversations</span>
+        <span id="historyCount">0</span>
+      </div>
+      <nav class="conversation-list" id="conversationList" aria-live="polite"></nav>
+
+      <div class="sidebar-footer">
+        <button class="sidebar-link" data-view="documents">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H10l2 2h5.5A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z"/></svg>
+          <span>Documents</span>
+          <span class="nav-badge" id="documentCount">0</span>
+        </button>
+        <button class="sidebar-link" data-view="settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.38.34.72.64.98.3.25.68.4 1.06.42h.1v4h-.1A1.7 1.7 0 0 0 19.4 15z"/></svg>
+          <span>Settings</span>
+        </button>
+        <div class="local-status" id="localStatus">
+          <span class="status-dot" aria-hidden="true"></span>
+          <div><strong>Checking backend</strong><small>Local &amp; private</small></div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <button class="icon-button mobile-only" id="openSidebar" aria-label="Open conversations">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+        <div class="topbar-title" id="topbarTitle">New conversation</div>
+        <label class="model-picker" title="Select the local model used by the existing backend">
+          <span class="model-pulse"></span>
+          <select id="modelSelect" aria-label="AI model"><option>Loading models…</option></select>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
+        </label>
+        <button class="icon-button" id="themeQuickToggle" aria-label="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.3A8 8 0 0 1 9.7 3.5 8.5 8.5 0 1 0 20.5 14.3z"/></svg>
+        </button>
+      </header>
+
+      <section class="view active" id="chatView" aria-label="Chat">
+        <div class="messages-scroll" id="messagesScroll">
+          <div class="messages" id="messages">
+            <div class="welcome" id="welcome">
+              <div class="welcome-mark" aria-hidden="true"><span>A</span></div>
+              <h1>What can I help you understand?</h1>
+              <p>Ask questions across your private documents. Apex AI retrieves the evidence, answers with your local model, and shows exactly where it came from.</p>
+              <div class="suggestion-grid">
+                <button class="suggestion" data-prompt="Summarize the key ideas in my documents."><span>Summarize</span><small>Find the most important ideas</small><b>↗</b></button>
+                <button class="suggestion" data-prompt="Compare the main recommendations across my documents."><span>Compare sources</span><small>Spot agreement and differences</small><b>↗</b></button>
+                <button class="suggestion" data-prompt="What facts in my documents should I verify first?"><span>Verify evidence</span><small>Review claims with citations</small><b>↗</b></button>
+                <button class="suggestion" data-view="documents"><span>Add knowledge</span><small>Upload PDF, TXT, MD, or JSON</small><b>＋</b></button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer-region" id="composerRegion">
+          <div class="attachment-tray" id="attachmentTray" aria-live="polite"></div>
+          <div class="composer" id="composer">
+            <button class="composer-icon" id="attachButton" aria-label="Attach documents" title="Attach documents">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.5 11.5-8.7 8.7a5 5 0 0 1-7.1-7.1l9.1-9.1a3.5 3.5 0 0 1 5 5l-9.1 9.1a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>
+            </button>
+            <textarea id="messageInput" rows="1" maxlength="20000" placeholder="Message Apex AI…" aria-label="Message Apex AI"></textarea>
+            <button class="send-button" id="sendButton" aria-label="Send message" disabled>
+              <svg class="send-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"/></svg>
+              <span class="stop-icon" aria-hidden="true"></span>
+            </button>
+          </div>
+          <div class="composer-meta">
+            <span><kbd>Enter</kbd> send · <kbd>Shift</kbd> + <kbd>Enter</kbd> new line</span>
+            <span class="privacy-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2M5 10h14v11H5z"/></svg>Runs on your configured backend</span>
+          </div>
+        </div>
+        <div class="drop-overlay" id="dropOverlay"><div><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M5 15v4h14v-4"/></svg><strong>Drop documents to add knowledge</strong><span>PDF, TXT, Markdown, or JSON</span></div></div>
+      </section>
+
+      <section class="view page-view" id="documentsView" aria-label="Documents">
+        <div class="page-container">
+          <div class="page-heading"><div><span class="eyebrow">KNOWLEDGE BASE</span><h1>Documents</h1><p>Everything Apex AI can retrieve and cite in your answers.</p></div><button class="primary-button" id="pageUploadButton"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M5 15v4h14v-4"/></svg>Upload documents</button></div>
+          <div class="upload-zone" id="documentDropZone" tabindex="0"><div class="upload-icon"><svg viewBox="0 0 24 24"><path d="M7 18a4.6 4.6 0 0 1-.4-9.2A6 6 0 0 1 18.2 10 4 4 0 0 1 18 18M12 16V9m0 0-3 3m3-3 3 3"/></svg></div><strong>Drop files here, or click to browse</strong><span>PDF, TXT, Markdown, and JSON · up to <b id="uploadLimit">50 MB</b> each</span></div>
+          <div class="section-header"><div><h2>Indexed documents</h2><span id="librarySummary">Loading…</span></div><button class="quiet-button" id="refreshDocuments"><svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.3-2.5L20 9M4 15l2.6 2.5A7 7 0 0 0 17.9 15"/></svg>Refresh</button></div>
+          <div class="document-library" id="documentLibrary"></div>
+          <div class="medical-notice"><svg viewBox="0 0 24 24"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 10v6M12 7h.01"/></svg><p><strong>Medical-use notice</strong>Apex AI reports information found in your documents. It is not medical advice, diagnosis, or a substitute for a qualified healthcare professional. Always verify the cited source.</p></div>
+        </div>
+      </section>
+
+      <section class="view page-view" id="settingsView" aria-label="Settings">
+        <div class="page-container settings-container">
+          <div class="page-heading"><div><span class="eyebrow">PREFERENCES</span><h1>Settings</h1><p>Personalize the interface without changing your RAG or LLM backend.</p></div></div>
+          <div class="settings-section"><div class="settings-copy"><h2>Appearance</h2><p>Choose how Apex AI looks on this device.</p></div><div class="theme-options" role="radiogroup" aria-label="Theme"><button data-theme-choice="light"><span class="theme-preview light-preview"></span><b>Light</b></button><button data-theme-choice="dark"><span class="theme-preview dark-preview"></span><b>Dark</b></button><button data-theme-choice="system"><span class="theme-preview system-preview"></span><b>System</b></button></div></div>
+          <div class="settings-section"><div class="settings-copy"><h2>Chat behavior</h2><p>These preferences are stored locally in your browser.</p></div><div class="setting-controls"><label class="switch-row"><span><b>Enter to send</b><small>Use Shift + Enter for a new line</small></span><input type="checkbox" id="enterToSend" checked><i></i></label><label class="switch-row"><span><b>Auto-scroll responses</b><small>Follow the response while it streams</small></span><input type="checkbox" id="autoScroll" checked><i></i></label><label class="switch-row"><span><b>Conversation memory</b><small>Use prior turns for follow-up questions, never as evidence</small></span><input type="checkbox" id="useMemory" checked><i></i></label></div></div>
+          <div class="settings-section"><div class="settings-copy"><h2>AI backend</h2><p>Live details from the existing Apex AI runtime.</p></div><div class="backend-card" id="backendDetails"><div class="skeleton-line"></div><div class="skeleton-line short"></div></div></div>
+          <div class="settings-section"><div class="settings-copy"><h2>Local data</h2><p>Conversation history and indexed documents remain on this machine.</p></div><div class="setting-controls"><button class="danger-outline" id="deleteAllConversations">Delete all conversations</button><small class="destructive-note">This does not delete your indexed documents.</small></div></div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="source-drawer" id="sourceDrawer" aria-label="Citation source" aria-hidden="true">
+      <div class="drawer-header"><div><span class="eyebrow">RETRIEVED EVIDENCE</span><h2 id="sourceTitle">Source</h2></div><button class="icon-button" id="closeSource" aria-label="Close source"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+      <div class="source-meta" id="sourceMeta"></div>
+      <pre class="source-text" id="sourceText"></pre>
+      <p class="source-footnote">This is the exact chunk supplied to the model for this answer.</p>
+    </aside>
+  </div>
+
+  <input id="fileInput" type="file" multiple accept=".pdf,.txt,.md,.markdown,.json" hidden>
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+  <div class="confirm-modal" id="confirmModal" aria-hidden="true"><div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="confirmTitle"><div class="modal-icon"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z"/></svg></div><h2 id="confirmTitle">Are you sure?</h2><p id="confirmText"></p><div class="modal-actions"><button class="quiet-button" id="confirmCancel">Cancel</button><button class="danger-button" id="confirmAccept">Delete</button></div></div></div>
+</body>
+</html>
