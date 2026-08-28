@@ -21,6 +21,7 @@ from apex_ai.config.settings import Settings, with_overrides
 from apex_ai.core.errors import ApexError
 from apex_ai.core.logging import get_logger, setup_logging
 from apex_ai.memory.conversation import ConversationMemory
+from apex_ai.memory.extraction import MemoryCandidateExtractor
 from apex_ai.memory.long_term import LongTermMemoryStore
 from apex_ai.models.manager import ModelManager
 from apex_ai.rag.engine import RagEngine
@@ -44,6 +45,7 @@ class ApexServices:
     reranker: Any = None
     memory: Any = None
     long_term_memory: LongTermMemoryStore | None = None
+    memory_extractor: MemoryCandidateExtractor | None = None
     query_processor: Any = None
     engine: RagEngine | None = None
     models: ModelManager | None = None
@@ -92,7 +94,11 @@ def build_services(
 
     settings = settings or load_settings()
     setup_logging(settings.log_dir)
-    services = ApexServices(settings=settings, models=ModelManager(settings))
+    services = ApexServices(
+        settings=settings,
+        models=ModelManager(settings),
+        memory_extractor=MemoryCandidateExtractor(),
+    )
 
     # Long-term memory is a separate optional persistence boundary. Phase 42
     # does not inject it into prompts, and a failure here must not disable the

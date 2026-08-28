@@ -53,9 +53,11 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.
 - **Separate long-term-memory foundation** — explicit preferences and ongoing context have
-  an independent SQLite store. Phase 42 deliberately does not extract chat text, inject
-  these records into prompts, or expose them in the UI; those safety-sensitive behaviors
-  are later roadmap phases.
+  an independent SQLite store, isolated from conversations and document evidence.
+- **Conservative memory candidates** — a deterministic, offline extractor can identify
+  only explicitly signaled preference/ongoing-context candidates while preserving exact
+  terms. It does not run automatically or persist candidates; safety and confirmation are
+  separate roadmap gates.
 - **Evaluation harness** — category-level retrieval, refusal, citation-integrity,
   groundedness-proxy, and per-stage latency measurements via `evaluate_rag.py`, with
   proxy limitations recorded in every report.
@@ -164,7 +166,9 @@ the browser components, streaming event protocol, memory/evidence boundary, and 
 flow. The Phase 41 short-term-history audit and design are documented in
 [`docs/PHASE41_CONVERSATION_CONTEXT.md`](docs/PHASE41_CONVERSATION_CONTEXT.md). The
 separate Phase 42 persistence boundary and its deliberate non-goals are documented in
-[`docs/PHASE42_LONG_TERM_MEMORY.md`](docs/PHASE42_LONG_TERM_MEMORY.md).
+[`docs/PHASE42_LONG_TERM_MEMORY.md`](docs/PHASE42_LONG_TERM_MEMORY.md); Phase 43's
+conservative, zero-write candidate extractor is covered in
+[`docs/PHASE43_MEMORY_EXTRACTION.md`](docs/PHASE43_MEMORY_EXTRACTION.md).
 
 ### Web endpoints used by the interface
 

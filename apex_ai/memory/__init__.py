@@ -6,6 +6,7 @@ from apex_ai.memory.conversations import (
     ConversationStore,
     Message,
 )
+from apex_ai.memory.extraction import MemoryCandidate, MemoryCandidateExtractor
 from apex_ai.memory.long_term import LongTermMemory, LongTermMemoryStore
 
 __all__ = [
@@ -16,6 +17,8 @@ __all__ = [
     "ConversationStore",
     "LongTermMemory",
     "LongTermMemoryStore",
+    "MemoryCandidate",
+    "MemoryCandidateExtractor",
     "Message",
     "build_conversation_context",
 ]

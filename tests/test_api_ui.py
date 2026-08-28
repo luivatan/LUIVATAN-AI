@@ -111,6 +111,25 @@ def test_phase42_does_not_extract_or_prompt_with_long_term_memory(
     assert private_memory not in repr(FakeLLM.last_messages)
 
 
+def test_phase43_candidate_like_chat_is_not_automatically_persisted(
+    api_client, wired_services
+):
+    from apex_ai.memory.extraction import MemoryCandidateExtractor
+    from apex_ai.memory.long_term import LongTermMemoryStore
+
+    question = "I prefer concise answers. What temperature is a fever in adults?"
+    wired_services.memory_extractor = MemoryCandidateExtractor()
+    wired_services.long_term_memory = LongTermMemoryStore(
+        wired_services.settings.long_term_memory_db_path
+    )
+    assert wired_services.memory_extractor.extract(question)
+
+    response = api_client.post("/query", json={"question": question})
+
+    assert response.status_code == 200
+    assert wired_services.long_term_memory.count() == 0
+
+
 def test_ingest_endpoint(api_client, tmp_path):
     response = api_client.post(
         "/documents/ingest", json={"path": str(DATA_DIR / "burn_care.md")}
