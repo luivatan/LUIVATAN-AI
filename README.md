@@ -56,8 +56,11 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   an independent SQLite store, isolated from conversations and document evidence.
 - **Conservative memory candidates** — a deterministic, offline extractor can identify
   only explicitly signaled preference/ongoing-context candidates while preserving exact
-  terms. It does not run automatically or persist candidates; safety and confirmation are
-  separate roadmap gates.
+  terms. It does not run automatically or persist candidates.
+- **Memory safety at the storage boundary** — candidates and every long-term-memory
+  create/update are screened locally for labeled credentials, known token/key formats,
+  likely opaque secrets, and unnecessary sensitive identifiers. Findings never echo the
+  matched value; confirmation remains a separate roadmap gate.
 - **Evaluation harness** — category-level retrieval, refusal, citation-integrity,
   groundedness-proxy, and per-stage latency measurements via `evaluate_rag.py`, with
   proxy limitations recorded in every report.
@@ -168,7 +171,9 @@ flow. The Phase 41 short-term-history audit and design are documented in
 separate Phase 42 persistence boundary and its deliberate non-goals are documented in
 [`docs/PHASE42_LONG_TERM_MEMORY.md`](docs/PHASE42_LONG_TERM_MEMORY.md); Phase 43's
 conservative, zero-write candidate extractor is covered in
-[`docs/PHASE43_MEMORY_EXTRACTION.md`](docs/PHASE43_MEMORY_EXTRACTION.md).
+[`docs/PHASE43_MEMORY_EXTRACTION.md`](docs/PHASE43_MEMORY_EXTRACTION.md), and Phase 44's
+storage-boundary safety policy in
+[`docs/PHASE44_MEMORY_SAFETY.md`](docs/PHASE44_MEMORY_SAFETY.md).
 
 ### Web endpoints used by the interface
 

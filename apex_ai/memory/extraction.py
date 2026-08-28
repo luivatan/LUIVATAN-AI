@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from apex_ai.security.memory import MemorySafetyPolicy
+
 MemoryKind = Literal["preference", "ongoing_context"]
 
 MAX_MESSAGE_CHARS = 20_000
@@ -115,7 +117,10 @@ class MemoryCandidate:
 
 
 class MemoryCandidateExtractor:
-    """Find only explicit durable-memory signals using auditable local rules."""
+    """Find explicit durable-memory signals, then apply the safety policy."""
+
+    def __init__(self, safety_policy: MemorySafetyPolicy | None = None) -> None:
+        self.safety_policy = safety_policy or MemorySafetyPolicy()
 
     def extract(
         self,
@@ -141,7 +146,7 @@ class MemoryCandidateExtractor:
             if not content or len(content) > MAX_CANDIDATE_CHARS:
                 continue
             match = self._classify(content)
-            if match is None:
+            if match is None or not self.safety_policy.inspect(content).safe:
                 continue
             kind, rule = match
             key = _normalized_key(kind, content)

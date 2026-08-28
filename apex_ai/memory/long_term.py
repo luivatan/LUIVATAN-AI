@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from apex_ai.core.errors import DatabaseError
+from apex_ai.security.memory import MemorySafetyPolicy
 
 ALLOWED_MEMORY_KINDS = frozenset({"preference", "ongoing_context"})
 
@@ -64,11 +65,19 @@ class LongTermMemory:
 class LongTermMemoryStore:
     """SQLite CRUD foundation, intentionally disconnected from model prompts."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        safety_policy: MemorySafetyPolicy | None = None,
+    ) -> None:
         self.path = Path(path)
+        self.safety_policy = safety_policy or MemorySafetyPolicy()
+        self.removed_unsafe_on_startup = 0
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._initialize()
+            self.removed_unsafe_on_startup = self._remove_unsafe_existing()
         except DatabaseError:
             raise
         except (OSError, sqlite3.Error) as error:
@@ -105,10 +114,32 @@ class LongTermMemoryStore:
         except sqlite3.Error as error:
             raise self._error("initialize", error) from error
 
+    def _remove_unsafe_existing(self) -> int:
+        """Delete recognized unsafe legacy rows without exposing their content."""
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    "SELECT id,content FROM long_term_memories"
+                ).fetchall()
+                unsafe_ids = [
+                    (row["id"],)
+                    for row in rows
+                    if not self.safety_policy.inspect(row["content"]).safe
+                ]
+                if unsafe_ids:
+                    connection.executemany(
+                        "DELETE FROM long_term_memories WHERE id=?",
+                        unsafe_ids,
+                    )
+                return len(unsafe_ids)
+        except sqlite3.Error as error:
+            raise self._error("apply safety checks to", error) from error
+
     def create(self, content: str, *, kind: str) -> LongTermMemory:
         """Persist one explicit memory; callers must choose its declared kind."""
         clean_kind = _validate_kind(kind)
         clean_content = _validate_content(content)
+        self.safety_policy.require_safe(clean_content)
         memory_id = str(uuid.uuid4())
         now = _now()
         try:
@@ -170,6 +201,7 @@ class LongTermMemoryStore:
         clean_content = (
             existing.content if content is None else _validate_content(content)
         )
+        self.safety_policy.require_safe(clean_content)
         clean_kind = existing.kind if kind is None else _validate_kind(kind)
         updated_at = _now()
         try:

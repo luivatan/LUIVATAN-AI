@@ -108,7 +108,7 @@ def test_optional_memory_failure_does_not_break_core_runtime(settings, monkeypat
     from apex_ai.embeddings.hashing import HashingEmbeddingProvider
 
     class BrokenMemoryStore:
-        def __init__(self, path):
+        def __init__(self, path, **kwargs):
             raise OSError("simulated optional-store failure")
 
     monkeypatch.setattr(runtime, "LongTermMemoryStore", BrokenMemoryStore)

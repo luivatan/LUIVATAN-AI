@@ -29,6 +29,7 @@ from apex_ai.rag.query_processing import QueryProcessor
 from apex_ai.retrieval.keyword import BM25Index
 from apex_ai.retrieval.pipeline import HybridRetriever
 from apex_ai.retrieval.reranker import make_reranker
+from apex_ai.security.memory import MemorySafetyPolicy
 
 log = get_logger("runtime")
 
@@ -45,6 +46,7 @@ class ApexServices:
     reranker: Any = None
     memory: Any = None
     long_term_memory: LongTermMemoryStore | None = None
+    memory_safety: MemorySafetyPolicy | None = None
     memory_extractor: MemoryCandidateExtractor | None = None
     query_processor: Any = None
     engine: RagEngine | None = None
@@ -94,20 +96,30 @@ def build_services(
 
     settings = settings or load_settings()
     setup_logging(settings.log_dir)
+    memory_safety = MemorySafetyPolicy()
     services = ApexServices(
         settings=settings,
         models=ModelManager(settings),
-        memory_extractor=MemoryCandidateExtractor(),
+        memory_safety=memory_safety,
+        memory_extractor=MemoryCandidateExtractor(memory_safety),
     )
 
     # Long-term memory is a separate optional persistence boundary. Phase 42
     # does not inject it into prompts, and a failure here must not disable the
     # existing chat/RAG stack.
     try:
-        long_term_memory = LongTermMemoryStore(settings.long_term_memory_db_path)
+        long_term_memory = LongTermMemoryStore(
+            settings.long_term_memory_db_path,
+            safety_policy=memory_safety,
+        )
         item_count = long_term_memory.count()
         services.long_term_memory = long_term_memory
         log.info("Long-term memory store ready: %d item(s)", item_count)
+        if long_term_memory.removed_unsafe_on_startup:
+            log.warning(
+                "Removed %d unsafe long-term memory record(s) during startup",
+                long_term_memory.removed_unsafe_on_startup,
+            )
     except ApexError as error:
         services._extras["long_term_memory_error"] = error.user_message()
         log.warning(
