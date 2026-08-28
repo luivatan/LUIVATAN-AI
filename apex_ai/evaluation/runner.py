@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -56,6 +55,11 @@ def run_evaluation(
     settings = load_settings()
     if embedding:
         settings = with_overrides(settings, embedding_model=embedding)
+        if embedding == "hashing":
+            # Hashing vectors intentionally have a different cosine scale and
+            # no semantic meaning; this threshold is only for deterministic
+            # smoke/failure-path runs and is recorded in report metadata.
+            settings = with_overrides(settings, min_similarity=0.05)
     if top_k:
         settings = with_overrides(settings, top_k=top_k, rerank_top_k=min(4, top_k))
     setup_logging(settings.log_dir)
@@ -85,24 +89,69 @@ def run_evaluation(
 
     _ensure_docs_ingested(services, docs_dir, items)
 
-    report = Report()
+    report = Report(
+        metadata={
+            "dataset": str(dataset_path),
+            "embedding_provider": services.embeddings.name,
+            "with_llm": with_llm,
+            "top_k": settings.top_k,
+            "semantic_candidate_k": settings.semantic_candidate_k,
+            "keyword_candidate_k": settings.keyword_candidate_k,
+            "min_similarity": settings.min_similarity,
+            "reranker": services.reranker.name,
+            "limitations": [
+                "Source/page hits are exact metadata checks, not answer correctness.",
+                "Source precision and reranker deltas use expected-document rank, not passage-level human relevance.",
+                "Context relevance and groundedness are lexical-overlap proxies, not factuality judgments.",
+                "Latency is local wall-clock time and is hardware/corpus/cache dependent.",
+                "Hashing embeddings are deterministic smoke-test tools, not production semantic models.",
+            ],
+        }
+    )
     for item in items:
         answer = None
-        insufficient = False
-        context_text = ""
-        retrieved = []
-
-        turn = services.engine.prepare(item["question"], use_memory=False)
+        citations = None
+        history = item.get("history") or []
+        turn = services.engine.prepare(
+            item["question"],
+            use_memory=False,
+            history_override=history,
+        )
         retrieved = turn.candidates[: settings.top_k]
         context_text = turn.context.text if turn.context else ""
+        context_ids = [chunk.chunk_id for chunk in (turn.context.used_chunks if turn.context else [])]
+        insufficient = not turn.supported
+        timings = dict(turn.timings)
 
         if with_llm:
-            result = services.engine.ask(item["question"], use_memory=False)
+            result = services.engine.ask(
+                item["question"],
+                use_memory=False,
+                history_override=history,
+            )
             answer = result.answer
+            citations = result.citations
+            context_ids = result.context_chunk_ids
+            context_text = result.context_text
             insufficient = result.insufficient_evidence
+            timings = {
+                key: float(value)
+                for key, value in result.timings.items()
+                if key != "total_s"
+            }
 
         report.items.append(
-            evaluate_item(item, retrieved, context_text, answer=answer, insufficient=insufficient)
+            evaluate_item(
+                item,
+                retrieved,
+                context_text,
+                answer=answer,
+                insufficient=insufficient,
+                reranked_chunks=turn.reranked_candidates,
+                citations=citations,
+                context_chunk_ids=context_ids,
+                timings_ms=timings,
+            )
         )
     return report
 
@@ -111,6 +160,11 @@ def _ensure_docs_ingested(services, docs_dir: Path, items: list[dict]) -> None:
     """Ingest any referenced source file that is not indexed yet."""
     referenced = {item.get("expected_source", "") for item in items}
     referenced |= {item.get("source", "") for item in items}
+    for item in items:
+        expected_sources = item.get("expected_sources", [])
+        if isinstance(expected_sources, str):
+            expected_sources = [expected_sources]
+        referenced.update(expected_sources)
     referenced.discard("")
 
     indexed_names = {d.name.lower() for d in services.ingestion.list_documents()}
@@ -131,7 +185,14 @@ def _force(item: dict | None) -> bool:
 
 def item_for(source_name: str, items: list[dict]) -> dict | None:
     for item in items:
-        if item.get("expected_source", "") == source_name or item.get("source", "") == source_name:
+        expected_sources = item.get("expected_sources", [])
+        if isinstance(expected_sources, str):
+            expected_sources = [expected_sources]
+        if (
+            item.get("expected_source", "") == source_name
+            or item.get("source", "") == source_name
+            or source_name in expected_sources
+        ):
             return item
     return None
 
@@ -150,24 +211,66 @@ def save_report(report: Report, output_dir: Path) -> Path:
 
 def print_report(report: Report, report_path: Path | None) -> None:
     summary = report.summary()
-    print("\n=== RAG EVALUATION (heuristic metrics — raw numbers, no claims) ===")
-    print(f"items:                  {summary['items']}")
-    print(f"source_hit_rate:        {summary['source_hit_rate']:.2%}")
-    print(f"page_hit_rate:          {summary['page_hit_rate']:.2%}")
-    print(f"first_hit_rate:         {summary['first_hit_rate']:.2%}")
-    print(f"mean_context_relevance: {summary['mean_context_relevance']:.3f}")
-    print(f"insufficient_rate:      {summary['insufficient_rate']:.2%}")
+
+    def percent(value) -> str:
+        return "n/a" if value is None else f"{value:.2%}"
+
+    def decimal(value) -> str:
+        return "n/a" if value is None else f"{value:.3f}"
+
+    print("\n=== RAG EVALUATION (measured values; proxies labeled, no quality claims) ===")
+    print(f"items:                    {summary['items']}")
+    print(f"source_hit_rate:          {percent(summary['source_hit_rate'])}")
+    print(f"mean_source_recall:       {decimal(summary['mean_source_recall'])}")
+    print(
+        f"mean_source_precision@k*: {decimal(summary['mean_source_precision_at_k'])}"
+    )
+    print(f"page_hit_rate:            {percent(summary['page_hit_rate'])}")
+    print(f"mean_page_recall:         {decimal(summary['mean_page_recall'])}")
+    print(f"first_hit_rate:           {percent(summary['first_hit_rate'])}")
+    print(f"mean_reciprocal_rank:     {decimal(summary['mean_reciprocal_rank'])}")
+    print(
+        "reranked_MRR / delta:      "
+        f"{decimal(summary['reranked_mean_reciprocal_rank'])} / "
+        f"{decimal(summary['mean_reranker_rr_delta'])}"
+    )
+    print(f"mean_context_relevance*:  {decimal(summary['mean_context_relevance'])}")
+    print(f"insufficient_rate:        {percent(summary['insufficient_rate'])}")
+    print(f"refusal_accuracy:         {percent(summary['refusal_accuracy'])}")
     if summary["mean_groundedness_proxy"] is not None:
-        print(f"mean_groundedness_proxy:{summary['mean_groundedness_proxy']:.3f}")
+        print(f"mean_groundedness_proxy*: {summary['mean_groundedness_proxy']:.3f}")
+    if summary["citation_integrity"] is not None:
+        print(f"citation_integrity:       {summary['citation_integrity']:.3f}")
+    if summary["citation_source_recall"] is not None:
+        print(f"citation_source_recall:   {summary['citation_source_recall']:.3f}")
+    if summary["citation_marker_validity"] is not None:
+        print(f"citation_marker_validity: {summary['citation_marker_validity']:.3f}")
+    if summary["mean_latency_ms"]:
+        latency = ", ".join(
+            f"{name}={value:.2f}" for name, value in summary["mean_latency_ms"].items()
+        )
+        print(f"mean_latency_ms:          {latency}")
+    print(
+        "* source precision uses document labels, not passage judgments; context/"
+        "groundedness use lexical overlap, not factuality judgments"
+    )
     if report_path:
-        print(f"report saved to:        {report_path}")
+        print(f"report saved to:          {report_path}")
 
     print("\nPer-item:")
     for item in report.items:
-        page = f"p{item.expected_page}" if item.expected_page is not None else "p-"
-        flags = " ".join([
-            "SRC" if item.source_hit else "src!",
-            page if item.page_hit else page + "!",
-            "TOP" if item.first_hit else "top!",
-        ])
-        print(f"  [{flags}] rel={item.context_relevance:.2f}  {item.question[:60]}")
+        if item.expected_pages:
+            page = "p" + ",".join(str(value) for value in item.expected_pages)
+        else:
+            page = "p-"
+        source_flag = "SRC" if item.source_hit is not False else "src!"
+        page_flag = page if item.page_hit is not False else page + "!"
+        top_flag = "TOP" if item.first_hit is not False else "top!"
+        refusal = ""
+        if item.refusal_correct is not None:
+            refusal = " GATE✓" if item.refusal_correct else " gate!"
+        flags = f"{source_flag} {page_flag} {top_flag}"
+        print(
+            f"  [{item.category} | {flags}{refusal}] "
+            f"rel*={item.context_relevance:.2f}  {item.question[:60]}"
+        )

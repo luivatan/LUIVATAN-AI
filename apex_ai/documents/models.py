@@ -60,6 +60,11 @@ class Section:
     page_start: int
     page_end: int
     paragraphs: list[str] = field(default_factory=list)
+    # Parallel to ``paragraphs``. Keeping text as ``list[str]`` preserves the
+    # public Section shape while retaining the source page for every paragraph.
+    # Older callers that construct Section directly may leave this empty; the
+    # chunker then falls back to ``page_start``.
+    paragraph_pages: list[int] = field(default_factory=list)
 
 
 @dataclass

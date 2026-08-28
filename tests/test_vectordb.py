@@ -78,6 +78,36 @@ def test_embedding_model_mismatch_is_detected(settings, embeddings, store):
         ChromaVectorStore(settings, DifferentEmbeddings(), collection_name="test_docs")
 
 
+def test_embedding_dimension_mismatch_is_detected(settings, embeddings, store):
+    from apex_ai.documents.models import Chunk
+
+    store.upsert_chunks(
+        [
+            Chunk(
+                chunk_id="same:0001",
+                text="dimension check",
+                document_id="same",
+                metadata={"document_id": "same", "document_name": "same.txt"},
+            )
+        ]
+    )
+
+    class WrongDimension:
+        name = embeddings.name
+        dimension = 128
+
+        @staticmethod
+        def embed_documents(texts):
+            return [[0.1] * 128 for _ in texts]
+
+        @staticmethod
+        def embed_query(text):
+            return [0.1] * 128
+
+    with pytest.raises(EmbeddingMismatchError):
+        ChromaVectorStore(settings, WrongDimension(), collection_name="test_docs")
+
+
 def test_medical_heuristic_flags_non_medical_content(ingestion):
     from apex_ai.documents.service import is_likely_medical_document
 
@@ -86,6 +116,20 @@ def test_medical_heuristic_flags_non_medical_content(ingestion):
 
     result = ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
     assert result.status == "indexed"
+
+
+def test_count_failure_is_wrapped_as_actionable_database_error():
+    class BrokenCollection:
+        @staticmethod
+        def count():
+            raise RuntimeError("database unavailable")
+
+    store = object.__new__(ChromaVectorStore)
+    store.collection = BrokenCollection()
+    with pytest.raises(DatabaseError) as excinfo:
+        store.count()
+    assert "count chunks" in excinfo.value.what
+    assert "rebuild" in excinfo.value.fix
 
 
 def test_store_error_wraps_io_problems(settings, embeddings, monkeypatch, tmp_path):

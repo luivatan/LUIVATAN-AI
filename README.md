@@ -29,24 +29,35 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   adding one class.
 - **Model manager** — scans a configurable models directory, shows name / type / size /
   status / active, and validates GGUF headers before loading.
-- **Structure-aware ingestion** — page numbers preserved, headings → sections →
-  paragraphs, extraction-garbage cleanup, scanned/empty-page detection.
+- **Structure-aware ingestion** — per-paragraph page provenance, page ranges,
+  headings → sections → paragraphs, extraction cleanup, scanned/empty-page detection.
 - **Smart chunking** — configurable chunk/overlap/min/max sizes, sentence-boundary
-  splits, no mid-sentence cuts, section-accurate metadata.
-- **Hybrid retrieval** — vector (semantic) + BM25 (exact keyword) merged with
-  Reciprocal Rank Fusion.
+  splits, hard post-overlap size limits, and no tiny-fragment merges across headings.
+- **Hybrid retrieval** — independently configurable semantic and BM25 candidate pools
+  merged with weighted Reciprocal Rank Fusion across conservative query variants.
+- **Exact-term retrieval** — names, IDs, dates, numbers, versions, and abbreviations
+  retain whole tokens as well as searchable components.
+- **Conservative query processing** — simple questions remain untouched; clear
+  follow-ups gain a lossless history query and genuinely multi-part questions gain
+  bounded subqueries. Optional LLM rewriting rejects dropped exact terms.
 - **Optional reranking** — cross-encoder if available, offline lexical fallback
   otherwise, or off. The app never breaks because a reranker is missing.
-- **Grounded generation** — the LLM must answer from the numbered evidence blocks,
-  distinguish evidence from inference, and say when evidence is insufficient. Below a
-  configurable similarity threshold Apex AI refuses instead of guessing.
+- **Grounded generation** — the LLM must answer from numbered evidence blocks and
+  identify unsupported parts. A conservative semantic-plus-lexical gate refuses when
+  retrieved context lacks enough support instead of trusting rank alone.
 - **Honest citations** — sources are built only from chunks actually sent to the
-  model, with SOURCE / PAGE / SECTION headers and a source viewer in the UI.
+  model, with SOURCE / PAGE or PAGE RANGE / SECTION headers and a source viewer in the UI.
 - **Duplicate protection** — SHA-256 document IDs; re-uploading the same file is
   detected and skipped (or force re-indexed).
 - **Separated memory** — conversation memory exists only to resolve follow-ups; it is
   never treated as document evidence and can never be cited.
-- **Evaluation harness** — deterministic retrieval metrics via `evaluate_rag.py`.
+- **Evaluation harness** — category-level retrieval, refusal, citation-integrity,
+  groundedness-proxy, and per-stage latency measurements via `evaluate_rag.py`, with
+  proxy limitations recorded in every report.
+- **Developer-only RAG trace** — an unlinked, OpenAPI-hidden `/debug/rag` route exists
+  only when `APEX_RAG_DEBUG=1`; it can show query/rank/context/gate timings plus the
+  actual configured model response and real sources without writing memory. Ordinary
+  chat payloads never contain candidate text.
 - **Chat-first web application** — a polished ChatGPT-style interface with persistent
   conversations, history search, true token streaming, stop/regenerate/copy actions,
   attachments, drag-and-drop ingestion, model selection, source drawer, responsive
@@ -174,9 +185,15 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_MODEL_DIR` | `models` | directory scanned by the model manager |
 | `APEX_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | embedding model (independent of the LLM) |
 | `APEX_RERANKER` | `auto` | `auto` / `cross_encoder` / `lexical` / `off` |
-| `APEX_TOP_K` | `12` | hybrid candidate pool size |
-| `APEX_RERANK_TOP_K` | `4` | evidence chunks sent to the LLM |
-| `APEX_MIN_SIMILARITY` | `0.30` | below this → "not enough information" |
+| `APEX_TOP_K` | `12` | fused hybrid candidate pool size |
+| `APEX_SEMANTIC_CANDIDATES` / `APEX_KEYWORD_CANDIDATES` | `16` / `16` | per-query channel pools |
+| `APEX_RERANK_TOP_K` | `4` | maximum evidence chunks offered to context building |
+| `APEX_VECTOR_WEIGHT` / `APEX_KEYWORD_WEIGHT` | `0.6` / `0.4` | weighted RRF channel influence |
+| `APEX_MIN_SIMILARITY` | `0.30` | semantic part of the evidence gate |
+| `APEX_QUERY_PROCESSING` / `APEX_QUERY_DECOMPOSITION` | `1` / `1` | automatic deterministic processing |
+| `APEX_QUERY_REWRITE` | `0` | optional extra LLM rewrite; not required for follow-ups |
+| `APEX_CONTEXT_CHAR_LIMIT` / `APEX_CONTEXT_TOKEN_RESERVE` | `6000` / `1024` | context budget and approximate model-window reserve |
+| `APEX_RAG_DEBUG` | `0` | add developer-only trace route when explicitly enabled |
 | `APEX_CHUNK_SIZE` / `_OVERLAP` / `_MIN` / `_MAX` | 1000/150/200/1600 | chunking |
 | `APEX_DATABASE_PATH` | `data/chroma` | vector store location |
 | `APEX_CONVERSATION_DB_PATH` | `data/conversations.db` | persistent conversation/history database |
@@ -198,8 +215,11 @@ python scripts/ingest_folder.py path/to/folder
 The pipeline: copy to `data/uploads` → SHA-256 → duplicate check → extract (pages
 preserved, headers/footers and hyphenation artifacts cleaned, scanned pages detected)
 → structure-aware chunking (heading → section → paragraph) → embed → store with
-`{sha256}:{seq}` chunk IDs. Every chunk metadata includes `document_id`,
-`document_name`, `source`, `page`, `section`, `chunk_index`, `created_at`.
+`{sha256}:{seq}` chunk IDs. Every new/re-indexed chunk records `chunk_id`,
+`document_id`, `document_name`/`filename`, `source`, `page`/`page_start`/`page_end`,
+`section`/`section_level`, `chunk_index`, character/content hashes, schema version, and
+`created_at`. Existing indexes remain readable; re-index a document to backfill the new
+page-range and chunk-schema fields.
 
 Documents can be attached from the composer, dropped anywhere on the chat, or managed
 from the Documents page. The browser upload route streams through a bounded staging
@@ -214,10 +234,18 @@ python evaluate_rag.py --with-llm         # also generate + score answers
 python evaluate_rag.py --embedding hashing  # offline smoke run, no downloads
 ```
 
-Metrics: `source_hit_rate`, `page_hit_rate`, `first_hit_rate`, context relevance,
-insufficient-evidence rate, and (with `--with-llm`) a groundedness proxy. Reports are
-JSON files in `eval/reports/`. These are heuristic measurements over your dataset —
-the script reports raw numbers and makes no performance claims.
+The bundled 19-item fixture covers direct, semantic/paraphrase, exact-match,
+multi-part, negative, follow-up, multi-document, duplicate, long-query/long-document,
+and multi-page retrieval. Reports include exact source/page hit and recall,
+expected-document precision@candidate-k, candidate and post-rerank MRR, reranker MRR
+change, evidence-gate accuracy, and stage latency. Only a run with a real configured LLM
+also reports citation-payload integrity, answer-marker validity, marker-resolved source
+recall, and the lexical groundedness proxy. Reports
+are JSON files in `eval/reports/` and record configuration plus limitations. Precision
+and reranker metrics use expected-document identity rather than human passage relevance;
+context relevance and groundedness are lexical proxies, not factuality or human quality
+judgments; hashing embeddings are an offline smoke-test provider, not a semantic
+benchmark.
 
 ## Testing
 
@@ -226,13 +254,13 @@ pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 
-106 tests cover extraction, chunking, metadata, embeddings, vector-store operations,
-duplicate detection, retrieval, reranking, provider errors, missing-model errors,
-citations, configuration, memory, persistent conversation CRUD/search, streaming and
-regeneration, safe browser uploads, responsive UI assets, the API, and both interface
+134 tests cover extraction, page/section-safe chunking, metadata, embeddings,
+vector-store operations, duplicate detection, exact and semantic retrieval, multi-query
+fusion, reranker/channel fallbacks, evidence gating, budget-safe context, citations,
+configuration, memory, persistent conversation CRUD/search, streaming/regeneration,
+safe uploads, developer-debug gating, responsive UI assets, the API, and both interface
 entry points. Automated tests run fully offline with deterministic hashing embeddings
-and a deterministic test LLM; the documented manual smoke test uses the configured
-real provider.
+and a deterministic test LLM; these verify mechanics, not production model quality.
 
 ## Development
 
@@ -253,7 +281,7 @@ retrieval, model loads, and timings are logged, document *contents* are not.
 | `EMBEDDING MODEL MISMATCH` | The index was built with a different embedding model. Point `APEX_EMBEDDING_MODEL` back at the old one, or rebuild the index (delete `data/chroma`, re-upload). |
 | llama-cpp-python fails to install | It compiles C++. Install build tools, use a prebuilt wheel, or switch to `APEX_LLM_PROVIDER=ollama`. |
 | `LLM PROVIDER ERROR: Ollama is not reachable` | Start `ollama serve` and `ollama pull <model>`, or check `APEX_OLLAMA_URL`. |
-| "I couldn't find enough information…" | Working as intended: retrieval confidence was below `APEX_MIN_SIMILARITY`. Lower it, rephrase, or index better-matching documents. |
+| "I couldn't find enough information…" | The retrieved context did not pass semantic-with-corroboration or conservative lexical support checks. Rephrase with exact terminology or index a source that covers the question; tune thresholds only after evaluation. |
 | Old index incompatible | The pre-Apex index (`./database`, L2 space, no embedding metadata) can't be safely reused — delete it and re-ingest. |
 
 ## Limitations
@@ -261,9 +289,13 @@ retrieval, model loads, and timings are logged, document *contents* are not.
 - Scanned PDFs need OCR **before** upload (no built-in OCR).
 - Chunk quality depends on PDF extraction quality; complex multi-column layouts and
   tables are approximated.
-- The cross-encoder reranker needs its model downloaded once; offline it falls back
-  to lexical reranking.
-- Query rewriting is off by default (extra LLM latency when on).
+- The cross-encoder reranker needs its model downloaded once; if unavailable or broken,
+  it falls back to lexical reranking. Lexical reranking is weaker than a trained model.
+- Deterministic query processing is on; optional LLM rewriting remains off by default
+  because it adds latency and model-dependent variability.
+- Context-window budgeting uses an approximate four-characters-per-token conversion;
+  provider tokenizers can differ.
+- Existing chunks remain compatible but need re-indexing to gain schema-v2 page ranges.
 - This stage remains a single-user local application. Authentication and subscriptions
   are intentionally deferred until the chat experience is validated; do not expose the
   server to an untrusted network yet.

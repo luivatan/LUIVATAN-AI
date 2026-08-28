@@ -20,11 +20,21 @@ from apex_ai.core.types import RetrievedChunk
 
 log = get_logger("retrieval.keyword")
 
-_TOKEN = re.compile(r"\w+")
+# Preserve exact identifiers/dates (``XJ-420``, ``2026-08-27``, ``v2.1``)
+# as tokens while also emitting their components. The complete token provides
+# exact-match precision; components still match prose that uses a different
+# separator.
+_TOKEN = re.compile(r"\w+(?:[-./:]\w+)*", re.UNICODE)
+_TOKEN_PART = re.compile(r"[-./:]")
 
 
 def tokenize(text: str) -> list[str]:
-    return _TOKEN.findall(text.lower())
+    tokens: list[str] = []
+    for match in _TOKEN.findall((text or "").lower()):
+        tokens.append(match)
+        if _TOKEN_PART.search(match):
+            tokens.extend(part for part in _TOKEN_PART.split(match) if part)
+    return tokens
 
 
 class BM25Index:
@@ -54,7 +64,15 @@ class BM25Index:
             self._chunk_ids = [c.chunk_id for c in chunks]
             self._metadatas = [c.metadata for c in chunks]
             self._texts = [c.text for c in chunks]
-            self._bm25 = BM25Plus([tokenize(text) for text in self._texts])
+            self._search_texts = [
+                "\n".join(
+                    part for part in (str(c.metadata.get("section", "")), c.text) if part
+                )
+                for c in chunks
+            ]
+            tokenized = [tokenize(text) for text in self._search_texts]
+            self._token_sets = [set(tokens) for tokens in tokenized]
+            self._bm25 = BM25Plus(tokenized)
             self._version = self._store.version
         return True
 
@@ -69,17 +87,30 @@ class BM25Index:
         if not tokens:
             return []
         scores = self._bm25.get_scores(tokens)
-        ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:k]
+        query_terms = set(tokens)
+        # BM25Plus adds a positive delta even when a document contains none of
+        # the query terms. Explicit overlap filtering prevents those baseline
+        # scores from turning unrelated chunks into apparent keyword hits.
+        eligible = [
+            index
+            for index in range(len(scores))
+            if query_terms.intersection(self._token_sets[index])
+        ]
+        ranked = sorted(eligible, key=lambda i: scores[i], reverse=True)[:k]
 
         results = []
         for index in ranked:
-            if scores[index] <= 0:
-                continue  # zero overlap is noise, not a hit
+            metadata = dict(self._metadatas[index])
+            overlap = len(query_terms.intersection(self._token_sets[index])) / max(
+                1, len(query_terms)
+            )
+            metadata["_keyword_score"] = float(scores[index])
+            metadata["_lexical_coverage"] = round(overlap, 6)
             results.append(
                 RetrievedChunk(
                     chunk_id=self._chunk_ids[index],
                     text=self._texts[index],
-                    metadata=dict(self._metadatas[index]),
+                    metadata=metadata,
                     retrieval_score=float(scores[index]),
                 )
             )

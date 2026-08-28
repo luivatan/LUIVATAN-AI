@@ -120,6 +120,28 @@ class ChromaVectorStore:
         stored_dim = metadata.get("embedding_dimension")
 
         if stored_model == self.embedding.name:
+            current_dim = self._safe_dimension()
+            try:
+                recorded_dim = int(stored_dim or 0)
+            except (TypeError, ValueError):
+                recorded_dim = 0
+            if self.collection.count() == 0:
+                if current_dim and recorded_dim != current_dim:
+                    self.collection.modify(metadata=self._collection_metadata())
+                return
+            if recorded_dim and current_dim and recorded_dim != int(current_dim):
+                raise EmbeddingMismatchError(
+                    what=(
+                        f"The index records {stored_dim}-dimension vectors for embedding "
+                        f"model '{stored_model}', but the available model reports "
+                        f"{current_dim} dimensions."
+                    ),
+                    why="The model name is the same but its vector shape is incompatible.",
+                    fix=(
+                        "Restore the embedding build used for this index, or rebuild the "
+                        "database and re-ingest the documents."
+                    ),
+                )
             return
 
         if stored_model is None and self.collection.count() == 0:
@@ -157,8 +179,16 @@ class ChromaVectorStore:
         if not chunks:
             return 0
         try:
+            # Section headings carry retrieval meaning (for example, a query
+            # may name a policy heading whose body uses only pronouns). Embed
+            # them with the body while storing only the exact source chunk, so
+            # citations and the source viewer never display synthetic text.
+            index_texts = [
+                "\n".join(part for part in (str(c.metadata.get("section", "")), c.text) if part)
+                for c in chunks
+            ]
             with timed(log, f"embedding {len(chunks)} chunk(s)"):
-                embeddings = self.embedding.embed_documents([c.text for c in chunks])
+                embeddings = self.embedding.embed_documents(index_texts)
             self.collection.upsert(
                 ids=[c.chunk_id for c in chunks],
                 documents=[c.text for c in chunks],
@@ -183,7 +213,7 @@ class ChromaVectorStore:
 
     def search(self, query_text: str, k: int = 5) -> list[RetrievedChunk]:
         """Vector search; returns chunks sorted by cosine similarity."""
-        count = self.collection.count()
+        count = self.count()
         if count == 0:
             return []
         k = min(k, count)
@@ -285,13 +315,25 @@ class ChromaVectorStore:
                 records[doc_id] = DocumentRecord(doc_id, name)
             record = records[doc_id]
             record.chunks += 1
-            page = metadata.get("page")
-            if page is not None:
-                record.pages.add(int(page))
+            page_start = metadata.get("page_start", metadata.get("page"))
+            page_end = metadata.get("page_end", page_start)
+            if page_start is not None:
+                try:
+                    start, end = int(page_start), int(page_end or page_start)
+                    record.pages.update(range(start, end + 1))
+                except (TypeError, ValueError):
+                    log.warning("Ignoring invalid page metadata for document %s", doc_id)
         return sorted(records.values(), key=lambda r: r.name.lower())
 
     def count(self) -> int:
-        return self.collection.count()
+        try:
+            return self.collection.count()
+        except Exception as error:
+            raise DatabaseError(
+                what="Could not count chunks in the vector database.",
+                why=str(error),
+                fix="Check logs/apex.log; if the database is corrupted, rebuild it.",
+            ) from error
 
     # -- maintenance -----------------------------------------------------------
 

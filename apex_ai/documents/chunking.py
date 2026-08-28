@@ -19,6 +19,7 @@ hardcoded.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 
@@ -153,7 +154,9 @@ def parse_sections(document: Document) -> list[Section]:
     def flush_run(page_number: int) -> None:
         nonlocal body_run
         if body_run and current is not None:
-            current.paragraphs.extend(_split_paragraphs("\n".join(body_run)))
+            paragraphs = _split_paragraphs("\n".join(body_run))
+            current.paragraphs.extend(paragraphs)
+            current.paragraph_pages.extend([page_number] * len(paragraphs))
             current.page_end = max(current.page_end, page_number)
         body_run = []
 
@@ -192,11 +195,18 @@ def parse_sections(document: Document) -> list[Section]:
 
 @dataclass
 class _Piece:
-    """A paragraph (or sentence) available for packing into chunks."""
+    """A paragraph (or sentence) available for packing into chunks.
+
+    Page ranges are explicit because a section—and occasionally one packed
+    chunk—can legitimately cross a PDF page boundary. A single ``page`` value
+    silently attributed all such text to the section's first page.
+    """
 
     text: str
-    page: int
+    page_start: int
+    page_end: int
     section: str
+    section_level: int
 
 
 def _hard_split(text: str, max_size: int) -> list[str]:
@@ -239,69 +249,127 @@ class Chunker:
 
         for section in sections:
             pieces: list[_Piece] = []
-            for paragraph in section.paragraphs:
+            for paragraph_index, paragraph in enumerate(section.paragraphs):
+                page_number = (
+                    section.paragraph_pages[paragraph_index]
+                    if paragraph_index < len(section.paragraph_pages)
+                    else section.page_start
+                )
                 paragraph = paragraph.strip()
                 if not paragraph:
                     continue
                 for part in _hard_split(paragraph, self.max_chunk_size):
-                    pieces.append(_Piece(part, section.page_start, section.title))
+                    pieces.append(
+                        _Piece(
+                            text=part,
+                            page_start=page_number,
+                            page_end=page_number,
+                            section=section.title,
+                            section_level=section.level,
+                        )
+                    )
             if pieces:
                 pieces_by_section.append(pieces)
 
         if not pieces_by_section:
             return []
 
-        # Pack each section independently so a chunk never mixes sections —
-        # this keeps the SECTION citation accurate. Tiny leftovers are merged
-        # afterwards by _merge_tiny.
+        # Pack and merge each section independently. Running the tiny-chunk
+        # merge over the flattened list used to combine the final fragment of
+        # one heading with the first chunk under the next heading, making the
+        # SECTION citation false.
         packed: list[_Piece] = []
         for pieces in pieces_by_section:
-            packed.extend(self._pack(pieces))
-        packed = self._merge_tiny(packed)
+            packed.extend(self._merge_tiny(self._pack(pieces)))
         return self._to_chunks(document, packed)
 
     # -- internals -------------------------------------------------------
 
     def _pack(self, pieces: list[_Piece]) -> list[_Piece]:
-        """Greedily pack pieces into chunks up to ``chunk_size`` characters."""
+        """Greedily pack pieces up to ``chunk_size`` and retain page ranges."""
         packed: list[_Piece] = []
         buffer: list[str] = []
         buffer_len = 0
-        buffer_page = pieces[0].page
+        buffer_page_start = pieces[0].page_start
+        buffer_page_end = pieces[0].page_end
         buffer_section = pieces[0].section
+        buffer_section_level = pieces[0].section_level
 
-        def flush():
+        def flush() -> None:
             nonlocal buffer, buffer_len
             if buffer:
-                packed.append(_Piece("\n\n".join(buffer), buffer_page, buffer_section))
+                packed.append(
+                    _Piece(
+                        text="\n\n".join(buffer),
+                        page_start=buffer_page_start,
+                        page_end=buffer_page_end,
+                        section=buffer_section,
+                        section_level=buffer_section_level,
+                    )
+                )
                 buffer, buffer_len = [], 0
 
         for piece in pieces:
             if buffer and buffer_len + len(piece.text) + 2 > self.chunk_size:
                 flush()
             if not buffer:
-                buffer_page = piece.page
+                buffer_page_start = piece.page_start
+                buffer_page_end = piece.page_end
                 buffer_section = piece.section
+                buffer_section_level = piece.section_level
+            else:
+                buffer_page_end = max(buffer_page_end, piece.page_end)
             buffer.append(piece.text)
             buffer_len += len(piece.text) + 2
         flush()
         return packed
 
     def _merge_tiny(self, chunks: list[_Piece]) -> list[_Piece]:
-        """Merge chunks below ``min_chunk_size`` into the previous chunk."""
+        """Merge undersized neighbours without crossing a section or hard limit.
+
+        A fragment is retained when no truthful, size-safe merge is possible;
+        exceeding ``max_chunk_size`` is worse than keeping one small chunk.
+        """
         if self.min_chunk_size <= 0 or len(chunks) <= 1:
             return chunks
+
         merged: list[_Piece] = []
         for piece in chunks:
-            if merged and len(piece.text) < self.min_chunk_size:
+            can_merge_back = (
+                merged
+                and len(piece.text) < self.min_chunk_size
+                and merged[-1].section == piece.section
+                and len(merged[-1].text) + len(piece.text) + 2 <= self.max_chunk_size
+            )
+            if can_merge_back:
                 previous = merged[-1]
                 merged[-1] = _Piece(
-                    previous.text + "\n\n" + piece.text,
-                    max(previous.page, piece.page),
-                    previous.section,
+                    text=previous.text + "\n\n" + piece.text,
+                    page_start=min(previous.page_start, piece.page_start),
+                    page_end=max(previous.page_end, piece.page_end),
+                    section=previous.section,
+                    section_level=previous.section_level,
                 )
             else:
                 merged.append(piece)
+
+        # The first fragment has no previous neighbour. Merge it forward only
+        # when the section and hard-size constraints both remain valid.
+        if (
+            len(merged) > 1
+            and len(merged[0].text) < self.min_chunk_size
+            and merged[0].section == merged[1].section
+            and len(merged[0].text) + len(merged[1].text) + 2 <= self.max_chunk_size
+        ):
+            first, second = merged[0], merged[1]
+            merged[1] = _Piece(
+                text=first.text + "\n\n" + second.text,
+                page_start=min(first.page_start, second.page_start),
+                page_end=max(first.page_end, second.page_end),
+                section=first.section,
+                section_level=first.section_level,
+            )
+            merged.pop(0)
         return merged
 
     def _overlap_tail(self, text: str) -> str:
@@ -321,27 +389,57 @@ class Chunker:
     def _to_chunks(self, document: Document, packed: list[_Piece]) -> list[Chunk]:
         chunks: list[Chunk] = []
         created = utc_now_iso()
-        previous_tail = ""
+        previous: _Piece | None = None
 
         for index, piece in enumerate(packed, start=1):
             text = piece.text
-            if previous_tail and not text.startswith(previous_tail):
-                text = f"{previous_tail}\n\n{text}"
-            previous_tail = self._overlap_tail(piece.text)
+            # Overlap is useful within one page/section, but carrying a tail
+            # across a page or heading makes citation locations ambiguous.
+            same_location = (
+                previous is not None
+                and previous.section == piece.section
+                and previous.page_end == piece.page_start
+            )
+            if same_location:
+                tail = self._overlap_tail(previous.text)
+                available = self.max_chunk_size - len(text) - 2
+                if tail and available > 0:
+                    if len(tail) > available:
+                        tail = tail[-available:]
+                        first_space = tail.find(" ")
+                        if first_space >= 0:
+                            tail = tail[first_space + 1 :]
+                    if tail and not text.startswith(tail):
+                        text = f"{tail}\n\n{text}"
+            previous = piece
 
+            chunk_id = f"{document.document_id}:{index:04d}"
+            content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
             chunks.append(
                 Chunk(
-                    chunk_id=f"{document.document_id}:{index:04d}",
+                    chunk_id=chunk_id,
                     text=text,
                     document_id=document.document_id,
                     metadata={
+                        "chunk_id": chunk_id,
                         "document_id": document.document_id,
                         "document_name": document.document_name,
+                        "filename": document.document_name,
                         "source": document.source_path,
                         "file_type": document.file_type,
-                        "page": piece.page,
+                        # ``page`` stays for API compatibility. The explicit
+                        # range prevents a spanning chunk from pretending all
+                        # evidence came from one page.
+                        "page": piece.page_start,
+                        "page_number": piece.page_start,
+                        "page_start": piece.page_start,
+                        "page_end": piece.page_end,
                         "section": piece.section[:200],
+                        "section_level": piece.section_level,
                         "chunk_index": index,
+                        "character_count": len(text),
+                        "content_sha256": content_hash,
+                        "chunk_schema_version": 2,
                         "created_at": created,
                     },
                 )

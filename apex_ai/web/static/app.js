@@ -331,11 +331,17 @@ function finalizeStreaming(message, citations = []) {
   state.messages.push(complete); state.activeAssistant = null;
 }
 
+function citationPage(citation) {
+  if (citation.page == null) return null;
+  return citation.page_end != null && citation.page_end !== citation.page
+    ? `${citation.page}–${citation.page_end}` : String(citation.page);
+}
 function renderCitations(container, citations) {
   container.replaceChildren();
   citations.forEach(citation => {
     const button = document.createElement("button"); button.className = "citation-button";
-    const location = citation.page ? `p. ${citation.page}` : (citation.section || "source");
+    const page = citationPage(citation);
+    const location = page ? `p. ${page}` : (citation.section || "source");
     button.innerHTML = `<span class="citation-index">${escapeHTML(citation.index)}</span><span></span>`;
     $("span:last-child", button).textContent = `${citation.source} · ${location}`;
     button.title = citation.label || citation.source;
@@ -346,7 +352,7 @@ function renderCitations(container, citations) {
 function openSource(citation) {
   $("#sourceTitle").textContent = citation.source || "Source";
   const meta = $("#sourceMeta"); meta.replaceChildren();
-  [["Citation", `[${citation.index}]`], ["Page", citation.page || "Not available"], ["Section", citation.section || "Not labeled"], ["Score", citation.score != null ? Number(citation.score).toFixed(4) : "—"]].forEach(([key, value]) => { const span = document.createElement("span"); span.textContent = `${key}: ${value}`; meta.append(span); });
+  [["Citation", `[${citation.index}]`], ["Page", citationPage(citation) || "Not available"], ["Section", citation.section || "Not labeled"], ["Score", citation.score != null ? Number(citation.score).toFixed(4) : "—"]].forEach(([key, value]) => { const span = document.createElement("span"); span.textContent = `${key}: ${value}`; meta.append(span); });
   $("#sourceText").textContent = citation.text || "The source text is unavailable for this older message.";
   $("#sourceDrawer").classList.add("open"); $("#sourceDrawer").setAttribute("aria-hidden", "false");
 }

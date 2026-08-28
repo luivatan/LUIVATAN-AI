@@ -97,22 +97,31 @@ class Settings:
     max_chunk_size: int = 1600
 
     # --- retrieval ------------------------------------------------------
-    top_k: int = 12  # hybrid candidate pool (~10-20 per spec)
+    top_k: int = 12  # fused candidate pool (~10-20 per spec)
+    semantic_candidate_k: int = 16  # per-query vector candidate pool
+    keyword_candidate_k: int = 16  # per-query BM25 candidate pool
     rerank_top_k: int = 4  # final evidence given to the LLM (3-5 per spec)
     vector_weight: float = 0.6
     keyword_weight: float = 0.4
-    min_similarity: float = 0.30  # below this → "insufficient evidence"
+    rrf_k: int = 60
+    min_similarity: float = 0.30  # semantic evidence gate
+    lexical_support_threshold: float = 0.60  # exact-evidence fallback gate
     reranker_mode: str = "auto"  # auto | cross_encoder | lexical | off
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    query_rewrite: bool = False  # optional LLM-based query rewriting
+    query_processing: bool = True  # conservative deterministic processing
+    query_decomposition: bool = True
+    query_rewrite: bool = False  # optional LLM rewrite (extra latency)
+    max_query_variants: int = 4
     medical_mode: bool = True  # adds the medical-safety addendum to prompts
 
     # --- context / generation --------------------------------------------
     context_char_limit: int = 6000
+    context_token_reserve: int = 1024
     memory_turns: int = 8
 
     # --- web application ---------------------------------------------------
     max_upload_mb: int = 50
+    rag_debug: bool = False  # gated developer endpoint; never in normal chat payloads
 
     # --- server ------------------------------------------------------------
     server_name: str = "0.0.0.0"
@@ -184,18 +193,39 @@ def load_settings() -> Settings:
         chunk_overlap=_int(_env("APEX_CHUNK_OVERLAP", default="150"), 150),
         min_chunk_size=_int(_env("APEX_MIN_CHUNK_SIZE", default="200"), 200),
         max_chunk_size=_int(_env("APEX_MAX_CHUNK_SIZE", default="1600"), 1600),
-        top_k=_int(_env("APEX_TOP_K", default="12"), 12),
-        rerank_top_k=_int(_env("APEX_RERANK_TOP_K", default="4"), 4),
+        top_k=max(1, _int(_env("APEX_TOP_K", default="12"), 12)),
+        semantic_candidate_k=max(
+            1, _int(_env("APEX_SEMANTIC_CANDIDATES", default="16"), 16)
+        ),
+        keyword_candidate_k=max(
+            1, _int(_env("APEX_KEYWORD_CANDIDATES", default="16"), 16)
+        ),
+        rerank_top_k=max(1, _int(_env("APEX_RERANK_TOP_K", default="4"), 4)),
         vector_weight=_float(_env("APEX_VECTOR_WEIGHT", default="0.6"), 0.6),
         keyword_weight=_float(_env("APEX_KEYWORD_WEIGHT", default="0.4"), 0.4),
+        rrf_k=max(1, _int(_env("APEX_RRF_K", default="60"), 60)),
         min_similarity=_float(_env("APEX_MIN_SIMILARITY", default="0.30"), 0.30),
+        lexical_support_threshold=_float(
+            _env("APEX_LEXICAL_SUPPORT_THRESHOLD", default="0.60"), 0.60
+        ),
         reranker_mode=_env("APEX_RERANKER", default="auto").lower(),
         reranker_model=_env("APEX_RERANKER_MODEL", default="cross-encoder/ms-marco-MiniLM-L-6-v2"),
+        query_processing=_bool(_env("APEX_QUERY_PROCESSING", default=""), True),
+        query_decomposition=_bool(_env("APEX_QUERY_DECOMPOSITION", default=""), True),
         query_rewrite=_bool(_env("APEX_QUERY_REWRITE", default=""), False),
+        max_query_variants=max(
+            1, _int(_env("APEX_MAX_QUERY_VARIANTS", default="4"), 4)
+        ),
         medical_mode=_bool(_env("APEX_MEDICAL_MODE", default=""), True),
-        context_char_limit=_int(_env("APEX_CONTEXT_CHAR_LIMIT", default="6000"), 6000),
+        context_char_limit=max(
+            200, _int(_env("APEX_CONTEXT_CHAR_LIMIT", default="6000"), 6000)
+        ),
+        context_token_reserve=max(
+            128, _int(_env("APEX_CONTEXT_TOKEN_RESERVE", default="1024"), 1024)
+        ),
         memory_turns=_int(_env("APEX_MEMORY_TURNS", default="8"), 8),
         max_upload_mb=max(1, _int(_env("APEX_MAX_UPLOAD_MB", default="50"), 50)),
+        rag_debug=_bool(_env("APEX_RAG_DEBUG", default=""), False),
         server_name=_env("APEX_SERVER_NAME", default="0.0.0.0"),
         server_port=_int(_env("APEX_SERVER_PORT", default="7860"), 7860),
     )

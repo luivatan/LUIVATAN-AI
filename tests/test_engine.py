@@ -17,6 +17,9 @@ def test_ask_returns_answer_with_citations(engine):
     assert result.answer
     assert result.citations, "an evidenced answer must carry citations"
     citation = result.citations[0]
+    assert {item.chunk_id for item in result.citations} == set(result.context_chunk_ids)
+    assert result.context_text
+    assert citation.text in result.context_text
     assert citation.source.endswith(".pdf") or citation.source.endswith(".md")
     assert citation.page is not None
     assert citation.text  # the source viewer needs the chunk text
@@ -201,4 +204,5 @@ def test_llm_failure_in_rewrite_degrades_gracefully():
 
     qp = QueryProcessor(enabled=True, llm_provider=BrokenLLM())
     queries = qp.expand("what about it?", history=[{"user": "x", "assistant": "y"}])
-    assert queries == ["what about it?"]  # original always survives
+    assert queries[0] == "what about it?"  # original always survives
+    assert "x" in queries[1]  # deterministic history fallback survives provider failure

@@ -42,6 +42,20 @@ def test_integer_parsing_falls_back_to_default(monkeypatch):
     assert load_settings().top_k == 12
 
 
+def test_phase2_rag_settings_are_environment_configurable(monkeypatch):
+    monkeypatch.setenv("APEX_SEMANTIC_CANDIDATES", "19")
+    monkeypatch.setenv("APEX_KEYWORD_CANDIDATES", "17")
+    monkeypatch.setenv("APEX_QUERY_PROCESSING", "0")
+    monkeypatch.setenv("APEX_MAX_QUERY_VARIANTS", "5")
+    monkeypatch.setenv("APEX_RAG_DEBUG", "1")
+    settings = load_settings()
+    assert settings.semantic_candidate_k == 19
+    assert settings.keyword_candidate_k == 17
+    assert not settings.query_processing
+    assert settings.max_query_variants == 5
+    assert settings.rag_debug
+
+
 def test_apex_error_message_has_what_why_fix():
     error = ApexError(what="bad thing", why="reason", fix="do this")
     message = error.user_message()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from apex_ai.core.types import RetrievedChunk
+from apex_ai.core.types import Citation, RetrievedChunk
 from apex_ai.evaluation.metrics import Report, evaluate_item, normalize_source, token_overlap
 from apex_ai.security.files import ensure_within, human_size, sha256_text
 import pytest
@@ -56,6 +56,29 @@ def test_evaluate_item_misses():
     assert metrics.context_relevance == 0.0
 
 
+def test_multi_page_recall_precision_and_reranker_delta_are_calculated():
+    item = {
+        "question": "combine both pages",
+        "expected_answer": "facts",
+        "expected_source": "expected.pdf",
+        "expected_pages": [1, 2],
+    }
+    unrelated = _chunk("other.pdf", 9)
+    page_one = _chunk("expected.pdf", 1)
+    page_two = _chunk("expected.pdf", 2)
+    metrics = evaluate_item(
+        item,
+        [unrelated, page_one, page_two],
+        context_text="facts",
+        reranked_chunks=[page_one, page_two, unrelated],
+    )
+    assert metrics.page_hit and metrics.page_recall == 1.0
+    assert metrics.source_precision_at_k == pytest.approx(2 / 3)
+    assert metrics.reciprocal_rank == 0.5
+    assert metrics.reranked_reciprocal_rank == 1.0
+    assert metrics.reranker_rr_delta == 0.5
+
+
 def test_groundedness_proxy_rewards_cited_sentences():
     item = {"question": "q", "expected_answer": "e", "expected_source": "s.pdf",
             "expected_page": 1}
@@ -65,6 +88,41 @@ def test_groundedness_proxy_rewards_cited_sentences():
     metrics = evaluate_item(item, [_chunk("s.pdf", 1, context)], context, answer=answer)
     assert metrics.groundedness_proxy is not None
     assert metrics.groundedness_proxy > 0.4
+
+
+def test_citation_metrics_follow_answer_markers_not_attached_source_list():
+    item = {
+        "question": "q",
+        "expected_answer": "expected fact",
+        "expected_source": "expected.pdf",
+        "expected_page": 2,
+    }
+    citations = [
+        Citation(1, "other.pdf", 1, "s", "other:1", "other", 0.8),
+        Citation(2, "expected.pdf", 2, "s", "expected:2", "expected fact", 0.7),
+    ]
+    metrics = evaluate_item(
+        item,
+        [_chunk("expected.pdf", 2, "expected fact")],
+        "expected fact",
+        answer="The expected fact is recorded [2], but this marker is invalid [9].",
+        citations=citations,
+        context_chunk_ids=["other:1", "expected:2"],
+    )
+    assert metrics.citation_integrity == 1.0
+    assert metrics.citation_marker_validity == 0.5
+    assert metrics.citation_source_recall == 1.0
+
+    uncited = evaluate_item(
+        item,
+        [_chunk("expected.pdf", 2, "expected fact")],
+        "expected fact",
+        answer="The expected fact is recorded without a citation.",
+        citations=citations,
+        context_chunk_ids=["other:1", "expected:2"],
+    )
+    assert uncited.citation_marker_validity == 0.0
+    assert uncited.citation_source_recall == 0.0
 
 
 def test_report_summary_shapes():

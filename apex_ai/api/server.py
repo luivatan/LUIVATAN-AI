@@ -37,6 +37,10 @@ class QueryRequest(BaseModel):
     use_memory: bool = True
 
 
+class RagDebugRequest(QueryRequest):
+    generate: bool = True
+
+
 def create_api(
     services: ApexServices | None = None,
     *,
@@ -159,6 +163,21 @@ def create_api(
             }
         except ApexError as error:
             raise HTTPException(status_code=500, detail=error.user_message()) from error
+
+    if services.settings.rag_debug:
+        # Developer-only diagnostics: no UI link, excluded from OpenAPI, and
+        # the route does not exist at all unless explicitly enabled by env.
+        @app.post("/debug/rag", include_in_schema=False)
+        def debug_rag(payload: RagDebugRequest):
+            _ensure_ready()
+            try:
+                return services.engine.debug(
+                    payload.question,
+                    use_memory=payload.use_memory,
+                    generate=payload.generate,
+                )
+            except ApexError as error:
+                raise HTTPException(status_code=500, detail=error.user_message()) from error
 
     app.include_router(create_upload_router(services))
     app.include_router(create_chat_router(services, conversations, app.state.generations))

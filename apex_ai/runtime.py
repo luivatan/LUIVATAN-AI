@@ -116,9 +116,18 @@ def build_services(
         services.reranker = make_reranker(settings)
         services.memory = ConversationMemory(settings.memory_path, settings.memory_turns)
 
-        llm = None if quiet_llm else services.active_llm()
+        # Deterministic follow-up expansion/decomposition is automatic and
+        # does not load the generation model. Optional LLM rewriting stays
+        # separately gated and resolves the active provider lazily.
+        query_llm = None
+        if settings.query_rewrite:
+            query_llm = _LazyLLM(services) if quiet_llm else services.active_llm()
         services.query_processor = QueryProcessor(
-            llm_provider=llm, enabled=settings.query_rewrite
+            llm_provider=query_llm,
+            enabled=settings.query_processing,
+            decompose=settings.query_decomposition,
+            llm_rewrite=settings.query_rewrite,
+            max_subqueries=max(0, settings.max_query_variants - 1),
         )
         services.engine = RagEngine(
             settings=settings,

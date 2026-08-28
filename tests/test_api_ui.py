@@ -65,6 +65,8 @@ def test_query_endpoint_returns_citations(api_client):
     assert payload["answer"]
     assert payload["citations"]
     assert payload["citations"][0]["page"] >= 1
+    assert "context_text" not in payload
+    assert "context_chunk_ids" not in payload
 
 
 def test_ingest_endpoint(api_client, tmp_path):
@@ -77,6 +79,37 @@ def test_ingest_endpoint(api_client, tmp_path):
 
 def test_models_endpoint_lists_discovered(api_client):
     assert api_client.get("/models").status_code == 200
+
+
+def test_rag_debug_route_does_not_exist_for_normal_users(api_client):
+    response = api_client.post("/debug/rag", json={"question": "fever"})
+    assert response.status_code == 404
+
+
+def test_rag_debug_route_is_explicitly_gated(wired_services):
+    from dataclasses import replace
+
+    from fastapi.testclient import TestClient
+
+    from apex_ai.api.server import create_api
+
+    debug_settings = replace(wired_services.settings, rag_debug=True)
+    wired_services.settings = debug_settings
+    wired_services.engine.settings = debug_settings
+    client = TestClient(create_api(wired_services, include_web=False))
+    memory_turns = len(wired_services.memory.turns)
+    response = client.post(
+        "/debug/rag", json={"question": "What temperature is a fever?"}
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["retrieval"]["candidates"]
+    assert payload["final_context"]
+    assert payload["model_response"]
+    assert payload["sources"]
+    assert payload["timings_ms"]["prepare_total"] >= 0
+    assert len(wired_services.memory.turns) == memory_turns
+    assert "/debug/rag" not in client.get("/openapi.json").text
 
 
 def test_select_missing_model_returns_400_with_message(api_client):

@@ -41,6 +41,16 @@ def test_scanned_pdf_raises_friendly_error():
     assert "OCR" in message  # tells the user what to do
 
 
+def test_corrupted_pdf_raises_actionable_error(tmp_path):
+    broken = tmp_path / "corrupted.pdf"
+    broken.write_bytes(b"%PDF-1.7\nthis is not a valid PDF structure")
+    with pytest.raises(DocumentProcessingError) as excinfo:
+        extract_document(broken)
+    message = str(excinfo.value)
+    assert "could not be opened or parsed" in message
+    assert "corrupted" in message
+
+
 def test_txt_and_md_extraction():
     md = extract_document(DATA_DIR / "burn_care.md")
     assert md.file_type == "md"

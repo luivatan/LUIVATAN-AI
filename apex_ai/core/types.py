@@ -45,9 +45,15 @@ class Citation:
     chunk_id: str
     text: str
     score: float
+    page_end: int | None = None
 
     def label(self) -> str:
-        location = f"page {self.page}" if self.page is not None else "no page"
+        if self.page is None:
+            location = "no page"
+        elif self.page_end not in (None, self.page):
+            location = f"pages {self.page}-{self.page_end}"
+        else:
+            location = f"page {self.page}"
         if self.section:
             return f"[{self.index}] {self.source} — {location} — {self.section}"
         return f"[{self.index}] {self.source} — {location}"
@@ -57,6 +63,7 @@ class Citation:
             "index": self.index,
             "source": self.source,
             "page": self.page,
+            "page_end": self.page_end,
             "section": self.section,
             "chunk_id": self.chunk_id,
             "score": round(self.score, 4),
@@ -73,6 +80,10 @@ class AnswerResult:
     insufficient_evidence: bool = False
     queries_used: list[str] = field(default_factory=list)
     timings: dict = field(default_factory=dict)
+    # Internal audit data for evaluation; normal API serializers do not expose
+    # candidate/context internals.
+    context_chunk_ids: list[str] = field(default_factory=list)
+    context_text: str = ""
 
     @property
     def sources_block(self) -> str:
