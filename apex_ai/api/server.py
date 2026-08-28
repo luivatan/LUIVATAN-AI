@@ -72,6 +72,13 @@ def create_api(
             "provider": services.settings.llm_provider,
             "model": services.settings.model_path or None,
             "embedding_model": services.embeddings.name if services.embeddings else None,
+            "long_term_memory": {
+                "status": "ready"
+                if services.long_term_memory is not None
+                else "unavailable",
+                "optional": True,
+                "prompt_use": False,
+            },
         }
         if services.ready:
             payload.update(services.ingestion.stats())

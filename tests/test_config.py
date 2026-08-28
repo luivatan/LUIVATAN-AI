@@ -68,6 +68,14 @@ def test_phase41_history_limits_are_environment_configurable(monkeypatch):
     assert settings.history_message_char_limit == 900
 
 
+def test_phase42_long_term_memory_path_is_environment_configurable(
+    monkeypatch, tmp_path
+):
+    configured = tmp_path / "independent-memory.db"
+    monkeypatch.setenv("APEX_LONG_TERM_MEMORY_DB_PATH", str(configured))
+    assert load_settings().long_term_memory_db_path == configured
+
+
 def test_apex_error_message_has_what_why_fix():
     error = ApexError(what="bad thing", why="reason", fix="do this")
     message = error.user_message()
@@ -111,3 +119,6 @@ def test_default_settings_shapes():
     assert settings.top_k == 12
     assert settings.rerank_top_k == 4
     assert settings.database_path == PROJECT_ROOT / "data" / "chroma"
+    assert settings.long_term_memory_db_path == (
+        PROJECT_ROOT / "data" / "long_term_memory.db"
+    )

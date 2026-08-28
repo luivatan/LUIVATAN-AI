@@ -52,6 +52,10 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
 - **Bounded conversation context** — newest complete turns are selected under configurable
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.
+- **Separate long-term-memory foundation** — explicit preferences and ongoing context have
+  an independent SQLite store. Phase 42 deliberately does not extract chat text, inject
+  these records into prompts, or expose them in the UI; those safety-sensitive behaviors
+  are later roadmap phases.
 - **Evaluation harness** — category-level retrieval, refusal, citation-integrity,
   groundedness-proxy, and per-stage latency measurements via `evaluate_rag.py`, with
   proxy limitations recorded in every report.
@@ -83,7 +87,7 @@ apex_ai/
 ├── vectordb/     ChromaDB persistence, embedding-version metadata, doc registry
 ├── retrieval/    BM25 index, hybrid RRF pipeline, rerankers
 ├── rag/          query processing, context builder, prompts, RagEngine
-├── memory/       bounded short-term context + JSON compatibility/SQLite history
+├── memory/       bounded chat context/history + separate long-term-memory SQLite store
 ├── web/          offline HTML/CSS/JS chat application and responsive design system
 ├── ui/           preserved legacy Gradio interface
 ├── api/          FastAPI, NDJSON chat streaming, uploads, conversations, legacy routes
@@ -144,7 +148,8 @@ Open **http://127.0.0.1:7860**. The main screen is the chat interface. Select a 
 in the header, attach or drag in documents, send a question, and expand the returned
 source chips to inspect the exact evidence. Conversations are real persisted records in
 `data/conversations.db`; **New chat**, history search, rename, delete, regenerate, and
-stop all operate on that store.
+stop all operate on that store. The independent Phase 42 persistence foundation lives in
+`data/long_term_memory.db`; it is not read by chat generation or populated from chat yet.
 
 The same process exposes API documentation at **`/api/docs`**. You can also use:
 
@@ -157,7 +162,9 @@ python chat.py                 # terminal chat (add -q "question" for one-shot u
 See [`docs/CHAT_INTERFACE_ARCHITECTURE.md`](docs/CHAT_INTERFACE_ARCHITECTURE.md) for
 the browser components, streaming event protocol, memory/evidence boundary, and upload
 flow. The Phase 41 short-term-history audit and design are documented in
-[`docs/PHASE41_CONVERSATION_CONTEXT.md`](docs/PHASE41_CONVERSATION_CONTEXT.md).
+[`docs/PHASE41_CONVERSATION_CONTEXT.md`](docs/PHASE41_CONVERSATION_CONTEXT.md). The
+separate Phase 42 persistence boundary and its deliberate non-goals are documented in
+[`docs/PHASE42_LONG_TERM_MEMORY.md`](docs/PHASE42_LONG_TERM_MEMORY.md).
 
 ### Web endpoints used by the interface
 
@@ -202,6 +209,7 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_CHUNK_SIZE` / `_OVERLAP` / `_MIN` / `_MAX` | 1000/150/200/1600 | chunking |
 | `APEX_DATABASE_PATH` | `data/chroma` | vector store location |
 | `APEX_CONVERSATION_DB_PATH` | `data/conversations.db` | persistent conversation/history database |
+| `APEX_LONG_TERM_MEMORY_DB_PATH` | `data/long_term_memory.db` | separate explicit preference/context store (not prompt-connected in Phase 42) |
 | `APEX_MAX_UPLOAD_MB` | `50` | server-enforced size limit for each browser upload |
 | `APEX_OFFLINE` | `0` | `1` = never download, fail with clear errors instead |
 

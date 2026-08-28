@@ -73,6 +73,9 @@ class Settings:
     conversation_db_path: Path = field(
         default_factory=lambda: resolve_path("data/conversations.db")
     )
+    long_term_memory_db_path: Path = field(
+        default_factory=lambda: resolve_path("data/long_term_memory.db")
+    )
 
     # --- embeddings ---------------------------------------------------
     embedding_model: str = "all-MiniLM-L6-v2"
@@ -179,6 +182,12 @@ def load_settings() -> Settings:
         memory_path=resolve_path(_env("APEX_MEMORY_PATH", default="data/conversation_memory.json")),
         conversation_db_path=resolve_path(
             _env("APEX_CONVERSATION_DB_PATH", default="data/conversations.db")
+        ),
+        long_term_memory_db_path=resolve_path(
+            _env(
+                "APEX_LONG_TERM_MEMORY_DB_PATH",
+                default="data/long_term_memory.db",
+            )
         ),
         embedding_model=_env("APEX_EMBEDDING_MODEL", default="all-MiniLM-L6-v2"),
         embedding_batch_size=_int(_env("APEX_EMBEDDING_BATCH_SIZE", default="32"), 32),

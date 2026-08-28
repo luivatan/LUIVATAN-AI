@@ -21,6 +21,7 @@ from apex_ai.config.settings import Settings, with_overrides
 from apex_ai.core.errors import ApexError
 from apex_ai.core.logging import get_logger, setup_logging
 from apex_ai.memory.conversation import ConversationMemory
+from apex_ai.memory.long_term import LongTermMemoryStore
 from apex_ai.models.manager import ModelManager
 from apex_ai.rag.engine import RagEngine
 from apex_ai.rag.query_processing import QueryProcessor
@@ -42,6 +43,7 @@ class ApexServices:
     retriever: Any = None
     reranker: Any = None
     memory: Any = None
+    long_term_memory: LongTermMemoryStore | None = None
     query_processor: Any = None
     engine: RagEngine | None = None
     models: ModelManager | None = None
@@ -91,6 +93,26 @@ def build_services(
     settings = settings or load_settings()
     setup_logging(settings.log_dir)
     services = ApexServices(settings=settings, models=ModelManager(settings))
+
+    # Long-term memory is a separate optional persistence boundary. Phase 42
+    # does not inject it into prompts, and a failure here must not disable the
+    # existing chat/RAG stack.
+    try:
+        long_term_memory = LongTermMemoryStore(settings.long_term_memory_db_path)
+        item_count = long_term_memory.count()
+        services.long_term_memory = long_term_memory
+        log.info("Long-term memory store ready: %d item(s)", item_count)
+    except ApexError as error:
+        services._extras["long_term_memory_error"] = error.user_message()
+        log.warning(
+            "Long-term memory unavailable; core services will continue: %s",
+            error.what,
+        )
+    except Exception as error:  # defensive optional-component boundary
+        services._extras["long_term_memory_error"] = (
+            f"Unexpected {type(error).__name__} while opening long-term memory."
+        )
+        log.exception("Unexpected long-term-memory initialization failure")
 
     try:
         settings.database_path.mkdir(parents=True, exist_ok=True)

@@ -54,6 +54,28 @@ def test_health_reports_ready(api_client, wired_services):
     assert payload["ready"] is True
     assert payload["documents"] == 1
     assert payload["chunks"] > 0
+    assert payload["long_term_memory"] == {
+        "status": "unavailable",
+        "optional": True,
+        "prompt_use": False,
+    }
+
+
+def test_health_reports_memory_availability_without_exposing_contents(
+    api_client, wired_services
+):
+    from apex_ai.memory.long_term import LongTermMemoryStore
+
+    canary = "PRIVATE-MEMORY-CANARY"
+    wired_services.long_term_memory = LongTermMemoryStore(
+        wired_services.settings.long_term_memory_db_path
+    )
+    wired_services.long_term_memory.create(canary, kind="preference")
+
+    response = api_client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["long_term_memory"]["status"] == "ready"
+    assert canary not in response.text
 
 
 def test_query_endpoint_returns_citations(api_client):
@@ -67,6 +89,26 @@ def test_query_endpoint_returns_citations(api_client):
     assert payload["citations"][0]["page"] >= 1
     assert "context_text" not in payload
     assert "context_chunk_ids" not in payload
+
+
+def test_phase42_does_not_extract_or_prompt_with_long_term_memory(
+    api_client, wired_services
+):
+    from apex_ai.memory.long_term import LongTermMemoryStore
+
+    private_memory = "PRIVATE-LONG-TERM-MEMORY-CANARY"
+    wired_services.long_term_memory = LongTermMemoryStore(
+        wired_services.settings.long_term_memory_db_path
+    )
+    wired_services.long_term_memory.create(private_memory, kind="preference")
+
+    response = api_client.post(
+        "/query", json={"question": "What temperature is a fever in adults?"}
+    )
+
+    assert response.status_code == 200
+    assert wired_services.long_term_memory.count() == 1
+    assert private_memory not in repr(FakeLLM.last_messages)
 
 
 def test_ingest_endpoint(api_client, tmp_path):
