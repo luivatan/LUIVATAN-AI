@@ -5,7 +5,11 @@ separately in test_api_ui.py and test_conversations_web.py)."""
 from __future__ import annotations
 
 from apex_ai.memory.long_term import LongTermMemory
-from apex_ai.memory.relevance import format_memory_text, select_relevant_memories
+from apex_ai.memory.relevance import (
+    find_similar_memory,
+    format_memory_text,
+    select_relevant_memories,
+)
 
 
 def _memory(content: str, kind: str, when: str) -> LongTermMemory:
@@ -54,3 +58,25 @@ def test_format_memory_text_renders_a_bullet_per_memory():
     ]
     text = format_memory_text(memories)
     assert text == "- Prefers concise answers.\n- Working on a Q3 budget review."
+
+
+def test_find_similar_memory_flags_a_likely_conflict():
+    existing = _memory("Prefers detailed answers.", "preference", "2026-01-01T00:00:00Z")
+    match = find_similar_memory("Prefers concise answers.", [existing])
+    assert match is existing
+
+
+def test_find_similar_memory_ignores_unrelated_content():
+    existing = _memory("Training for a marathon in October.", "ongoing_context", "2026-01-01T00:00:00Z")
+    assert find_similar_memory("Prefers concise answers.", [existing]) is None
+
+
+def test_find_similar_memory_returns_none_for_no_existing_memories():
+    assert find_similar_memory("Prefers concise answers.", []) is None
+
+
+def test_find_similar_memory_picks_the_closer_of_two_matches():
+    weak = _memory("Prefers answers with citations.", "preference", "2026-01-01T00:00:00Z")
+    strong = _memory("Prefers detailed thorough answers.", "preference", "2026-01-01T00:00:00Z")
+    match = find_similar_memory("Prefers detailed answers.", [weak, strong])
+    assert match is strong

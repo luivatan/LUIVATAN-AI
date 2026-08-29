@@ -168,6 +168,9 @@ def test_static_assets_include_responsive_themes_and_code_blocks(web_client):
     assert ".memory-row" in css.text
     assert "function loadMemories" in javascript.text
     assert "clearAllMemories" in javascript.text
+    # Phase 49: conflict warning on the memory-confirmation card.
+    assert ".memory-confirmation-conflict" in css.text
+    assert "conflicts_with" in javascript.text
 
 
 def test_streaming_chat_uses_real_engine_and_persists_verified_citations(web_client):
@@ -289,6 +292,34 @@ def test_unsafe_memory_candidate_is_never_offered(web_client, web_services):
     assert stream[0]["memory_candidates"] == []
     assert web_services.long_term_memory.pending() == []
     assert web_services.long_term_memory.count() == 0
+
+
+def test_memory_candidate_flags_a_conflict_with_an_existing_memory(web_client, web_services):
+    """Phase 49: detection only - the existing memory is untouched; a human
+    still decides via approve/reject (Phase 45) or delete (Phase 46)."""
+    existing = web_services.long_term_memory.create("I prefer detailed answers.", kind="preference")
+
+    stream = events(
+        web_client.post(
+            "/chat/stream",
+            json={
+                "question": "I prefer concise answers. What temperature is a fever in adults?",
+                "request_id": "conflict-check",
+            },
+        )
+    )
+    proposal = stream[0]["memory_candidates"][0]
+    assert proposal["conflicts_with"]["id"] == existing.id
+    assert proposal["conflicts_with"]["content"] == "I prefer detailed answers."
+
+    listed = web_client.get("/memory/candidates").json()
+    assert listed[0]["conflicts_with"]["id"] == existing.id
+
+    # Nothing was auto-resolved: both memories still exist independently.
+    assert web_services.long_term_memory.count() == 1
+    web_client.post(f"/memory/candidates/{proposal['id']}/approve")
+    assert web_services.long_term_memory.count() == 2
+    assert existing == web_services.long_term_memory.get(existing.id)
 
 
 def test_memory_management_list_delete_and_clear(web_client, web_services):

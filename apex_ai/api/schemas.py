@@ -69,6 +69,7 @@ class MemoryCandidateOut(BaseModel):
     rule: str
     created_at: str
     expires_at: str
+    conflicts_with: LongTermMemoryOut | None = None
 
 
 class ApproveMemoryOut(BaseModel):

@@ -74,4 +74,39 @@ def format_memory_text(memories: list[LongTermMemory]) -> str:
     return "\n".join(f"- {memory.content}" for memory in memories)
 
 
-__all__ = ["format_memory_text", "select_relevant_memories"]
+def find_similar_memory(
+    content: str,
+    existing_memories: list[LongTermMemory],
+    *,
+    min_overlap_ratio: float = 0.5,
+) -> LongTermMemory | None:
+    """Phase 49: the most keyword-similar existing memory, if any is similar
+    enough to plausibly be about the same thing without being a duplicate.
+
+    Exact (casefold/whitespace-normalized) duplicates are already deduplicated
+    earlier, at proposal time (``LongTermMemoryStore.propose_candidate``), so a
+    match found here is genuinely a *different* statement that shares most of
+    its meaningful words with an existing one — e.g. "prefers concise answers"
+    vs. "prefers detailed answers" — which is exactly the "may be outdated or
+    conflicting" case this phase asks to detect. This never deletes or replaces
+    anything by itself; it only surfaces the match for the confirmation UI so a
+    human decides, per the roadmap's "handle safely" wording.
+    """
+    candidate_words = _keywords(content)
+    if not candidate_words:
+        return None
+    best: LongTermMemory | None = None
+    best_ratio = 0.0
+    for memory in existing_memories:
+        memory_words = _keywords(memory.content)
+        if not memory_words:
+            continue
+        overlap = len(candidate_words & memory_words)
+        ratio = overlap / min(len(candidate_words), len(memory_words))
+        if ratio >= min_overlap_ratio and ratio > best_ratio:
+            best_ratio = ratio
+            best = memory
+    return best
+
+
+__all__ = ["find_similar_memory", "format_memory_text", "select_relevant_memories"]

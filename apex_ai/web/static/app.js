@@ -284,6 +284,12 @@ function renderMemoryCandidates() {
     const kind = document.createElement("span"); kind.className = "memory-confirmation-kind"; kind.textContent = candidate.kind === "preference" ? "Preference" : "Ongoing context";
     heading.append(title, kind);
     const content = document.createElement("p"); content.className = "memory-confirmation-content"; content.textContent = candidate.content;
+    let conflict = null;
+    if (candidate.conflicts_with) {
+      conflict = document.createElement("p"); conflict.className = "memory-confirmation-conflict";
+      conflict.innerHTML = "May conflict with a saved memory: <b></b>";
+      $("b", conflict).textContent = candidate.conflicts_with.content;
+    }
     const footer = document.createElement("div"); footer.className = "memory-confirmation-footer";
     const warning = document.createElement("span"); warning.className = "memory-confirmation-warning"; warning.textContent = "Review first · never save secrets";
     const actions = document.createElement("div"); actions.className = "memory-confirmation-actions";
@@ -291,7 +297,7 @@ function renderMemoryCandidates() {
     const approve = document.createElement("button"); approve.type = "button"; approve.className = "memory-confirmation-action approve"; approve.textContent = "Remember";
     reject.addEventListener("click", () => decideMemoryCandidate(candidate.id, "reject"));
     approve.addEventListener("click", () => decideMemoryCandidate(candidate.id, "approve"));
-    actions.append(reject, approve); footer.append(warning, actions); card.append(heading, content, footer); region.append(card);
+    actions.append(reject, approve); footer.append(warning, actions); card.append(heading, content); if (conflict) card.append(conflict); card.append(footer); region.append(card);
   });
 }
 

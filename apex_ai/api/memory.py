@@ -48,7 +48,14 @@ def create_memory_router(services) -> APIRouter:
     @router.get("/candidates", response_model=list[MemoryCandidateOut])
     def list_candidates():
         try:
-            return [item.to_dict() for item in confirmation_service().pending()]
+            service = confirmation_service()
+            payloads = []
+            for item in service.pending():
+                conflict = service.find_conflict(item)
+                payloads.append(
+                    {**item.to_dict(), "conflicts_with": conflict.to_dict() if conflict else None}
+                )
+            return payloads
         except ApexError as error:
             raise APIError.from_apex(error, status_code=503) from error
 

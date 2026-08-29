@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from apex_ai.memory.extraction import MemoryCandidateExtractor
 from apex_ai.memory.long_term import LongTermMemory, LongTermMemoryStore, PendingMemory
+from apex_ai.memory.relevance import find_similar_memory
 
 
 class MemoryConfirmationService:
@@ -18,6 +19,15 @@ class MemoryConfirmationService:
     ) -> None:
         self.extractor = extractor
         self.store = store
+
+    def find_conflict(self, candidate: PendingMemory) -> LongTermMemory | None:
+        """Phase 49: an existing confirmed memory of the same kind this
+        candidate looks like it may be updating or contradicting. Detection
+        only — approving still just adds the new memory; nothing is deleted
+        or overwritten automatically. Resolving a real conflict (deleting the
+        stale one) is the existing Phase 46 memory-management UI's job."""
+        existing = self.store.list(kind=candidate.kind)
+        return find_similar_memory(candidate.content, existing)
 
     def propose_from_user_message(self, user_message: str) -> list[PendingMemory]:
         proposals: list[PendingMemory] = []

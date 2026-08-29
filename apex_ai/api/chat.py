@@ -112,6 +112,16 @@ def _citation_payload(citation) -> dict:
     return payload
 
 
+def _candidate_payload(candidate, confirmation_service) -> dict:
+    """Phase 49: attach any detected conflict so the confirmation card can warn
+    before the user approves, without changing what approval itself does."""
+    conflict = confirmation_service.find_conflict(candidate)
+    return {
+        **candidate.to_dict(),
+        "conflicts_with": conflict.to_dict() if conflict else None,
+    }
+
+
 def _engine_for_conversation(services, memory) -> RagEngine:
     """Reuse every existing backend component, changing only the memory view."""
     base = services.engine
@@ -233,7 +243,7 @@ def create_chat_router(
         if not payload.regenerate and services.memory_confirmation is not None:
             try:
                 memory_candidates = [
-                    item.to_dict()
+                    _candidate_payload(item, services.memory_confirmation)
                     for item in services.memory_confirmation.propose_from_user_message(
                         question
                     )
