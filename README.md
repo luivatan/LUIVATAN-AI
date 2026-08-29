@@ -298,6 +298,35 @@ Legacy names from the previous project (`LLM_PROVIDER`, `LLAMA_MODEL_PATH`,
 `OLLAMA_*`, `OPENAI_*`, `HF_MODEL_PATH`) still work; `APEX_*` names win.
 Secrets (API keys) belong only in `.env` — never committed.
 
+### Secret management (Phase 59)
+
+`APEX_OPENAI_API_KEY` is the only runtime secret Apex AI has today (local
+llama.cpp needs none; Ollama's default local URL needs none; session identity
+is an opaque random token, not a signed/keyed scheme, so there is no signing
+secret either). It is read once from the environment
+(`apex_ai/config/settings.py`), never logged, and excluded from `Settings`'s
+own `repr()` (`test_api_key_is_redacted_from_settings_repr` in
+`tests/test_config.py` enforces this) — so it cannot leak into logs, error
+messages, or a debug dump of the running configuration by accident.
+
+For local development, `.env` (gitignored; `.env.example` documents every
+variable with a placeholder, never a real value) is sufficient. For a real
+deployment, set `APEX_OPENAI_API_KEY` from your platform's own secret
+storage instead of a checked-in file — Apex AI needs no code changes for
+this, since every secret manager's standard integration point is injecting
+environment variables into the process at startup:
+
+- **Docker / Docker Compose** — `docker run --env-file` pointed at a file
+  outside version control, or [Docker secrets](https://docs.docker.com/engine/swarm/secrets/)
+  mounted and exported by your entrypoint script.
+- **Kubernetes** — a `Secret` object consumed via `envFrom`/`env.valueFrom.secretKeyRef`
+  on the container spec.
+- **systemd** — `EnvironmentFile=/etc/apex-ai/secrets.env` (mode `600`,
+  owned by the service user) in the unit file.
+- **Cloud providers** — AWS Secrets Manager, GCP Secret Manager, Railway,
+  Render, Fly.io, and similar all offer "inject as environment variable"
+  for a deployed service; point it at `APEX_OPENAI_API_KEY`.
+
 ## Document ingestion
 
 Supported: **PDF, TXT, Markdown, JSON**. Attach from chat, use the Documents page, or:
