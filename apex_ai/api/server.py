@@ -7,9 +7,10 @@ and static delivery of the chat interface.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from pydantic import BaseModel, Field
 
 from apex_ai import APP_NAME, __version__
@@ -28,9 +29,12 @@ from apex_ai.api.schemas import (
     RemovedOut,
 )
 from apex_ai.api.uploads import create_upload_router
+from apex_ai.core.logging import get_logger, log_event
 from apex_ai.memory.conversations import ConversationStore
 from apex_ai.models.manager import ModelManager
 from apex_ai.runtime import ApexServices, build_services
+
+log = get_logger("api.health")
 
 
 # Request models stay at module scope. FastAPI resolves postponed annotations from
@@ -76,15 +80,76 @@ def create_api(
         if not services.ready:
             raise service_not_ready_error()
 
+    def _configured_model_name() -> str:
+        """The model name the active provider will try to use, independent of
+        whether it has actually been verified reachable (see ``_database_status``
+        and the ``llm`` health field for what *is* checked live)."""
+        configured_model = services.settings.model_path
+        if configured_model:
+            return Path(configured_model).name
+        if services.settings.llm_provider == "ollama":
+            return services.settings.ollama_model
+        if services.settings.llm_provider in {"openai", "openai_compatible"}:
+            return services.settings.openai_model
+        if services.settings.llm_provider == "transformers":
+            return services.settings.hf_model_path
+        return ""
+
+    def _database_status() -> dict:
+        """A cheap, synchronous liveness probe for the vector store.
+
+        ``services.ready`` reflects whether the store was constructed at
+        *startup*; it is not re-checked afterward. Counting the collection is a
+        real read against the same ChromaDB handle the RAG engine queries, so a
+        DB file removed, corrupted, or made unreadable after startup is caught
+        here instead of only surfacing as a confusing failure mid-chat.
+        """
+        if services.store is None:
+            return {"status": "unavailable", "detail": "not_initialized"}
+        try:
+            services.store.count()
+        except Exception as error:  # noqa: BLE001 - health probe boundary
+            log_event(
+                log,
+                logging.WARNING,
+                "health.database_probe_failed",
+                "Health check could not reach the vector store",
+                error_type=type(error).__name__,
+            )
+            return {"status": "unavailable", "detail": type(error).__name__}
+        return {"status": "ok", "detail": None}
+
+    def _llm_status() -> dict:
+        """Reports whether a model is *configured*, not whether it is reachable.
+
+        Verifying reachability would mean a real generation/network call on
+        every health check (slow, and for remote providers a paid or
+        rate-limited request) — Apex validates the provider at question time
+        instead, with a specific actionable error. Faking a "connected" result
+        here would violate the no-fake-status rule as much as skipping the
+        check entirely, so this field says exactly what it does and does not
+        verify.
+        """
+        provider = services.settings.llm_provider
+        return {
+            "configured": bool(_configured_model_name()),
+            "provider": provider,
+            "note": "Configuration only; connectivity is verified when a question is asked.",
+        }
+
     @app.get("/health", response_model=HealthOut, response_model_exclude_none=True)
-    def health():
+    def health(response: Response):
+        database = _database_status()
+        overall_ready = services.ready and database["status"] == "ok"
         payload = {
             "app": APP_NAME,
             "version": __version__,
-            "ready": services.ready,
+            "ready": overall_ready,
             "provider": services.settings.llm_provider,
             "model": services.settings.model_path or None,
             "embedding_model": services.embeddings.name if services.embeddings else None,
+            "database": database,
+            "llm": _llm_status(),
             "long_term_memory": {
                 "status": "ready"
                 if services.long_term_memory is not None
@@ -93,31 +158,23 @@ def create_api(
                 "prompt_use": False,
             },
         }
-        if services.ready:
+        if overall_ready:
             payload.update(services.ingestion.stats())
         if services.startup_error:
             payload["startup_error"] = services.startup_error
+        response.status_code = 200 if overall_ready else 503
         return payload
 
     @app.get("/app-config", response_model=AppConfigOut)
     def app_config():
         stats = services.ingestion.stats() if services.ingestion else {"documents": 0, "chunks": 0}
-        configured_model = services.settings.model_path
-        if configured_model:
-            configured_model = Path(configured_model).name
-        elif services.settings.llm_provider == "ollama":
-            configured_model = services.settings.ollama_model
-        elif services.settings.llm_provider in {"openai", "openai_compatible"}:
-            configured_model = services.settings.openai_model
-        elif services.settings.llm_provider == "transformers":
-            configured_model = services.settings.hf_model_path
         return {
             "app": APP_NAME,
             "version": __version__,
             "ready": services.ready,
             "startup_error": services.startup_error or None,
             "provider": services.settings.llm_provider,
-            "model": configured_model or None,
+            "model": _configured_model_name() or None,
             "embedding_model": services.embeddings.name if services.embeddings else None,
             "reranker": getattr(services.reranker, "name", None),
             "max_upload_mb": services.settings.max_upload_mb,

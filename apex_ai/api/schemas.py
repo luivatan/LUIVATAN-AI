@@ -117,6 +117,17 @@ class LongTermMemoryStatusOut(BaseModel):
     prompt_use: bool
 
 
+class ComponentStatusOut(BaseModel):
+    status: str
+    detail: str | None = None
+
+
+class LlmStatusOut(BaseModel):
+    configured: bool
+    provider: str
+    note: str
+
+
 class HealthOut(BaseModel):
     app: str
     version: str
@@ -124,6 +135,8 @@ class HealthOut(BaseModel):
     provider: str
     model: str | None
     embedding_model: str | None
+    database: ComponentStatusOut
+    llm: LlmStatusOut
     long_term_memory: LongTermMemoryStatusOut
     documents: int | None = None
     chunks: int | None = None
@@ -156,6 +169,7 @@ class QueryOut(BaseModel):
 __all__ = [
     "AppConfigOut",
     "ApproveMemoryOut",
+    "ComponentStatusOut",
     "ConversationDetailOut",
     "ConversationOut",
     "DeletedCountOut",
@@ -163,6 +177,7 @@ __all__ = [
     "DocumentOut",
     "HealthOut",
     "IngestOut",
+    "LlmStatusOut",
     "LongTermMemoryStatusOut",
     "MemoryCandidateOut",
     "MessageOut",

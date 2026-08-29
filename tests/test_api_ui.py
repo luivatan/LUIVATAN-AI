@@ -79,7 +79,8 @@ def test_health_reports_memory_availability_without_exposing_contents(
 
 
 def test_health_omits_stats_when_not_ready(settings):
-    """Phase 7: response_model_exclude_none must not turn absent fields into nulls."""
+    """Phase 7: response_model_exclude_none must not turn absent fields into nulls.
+    Phase 8: an unready health check must report it via the status code too."""
     from fastapi.testclient import TestClient
 
     from apex_ai.api.server import create_api
@@ -89,12 +90,37 @@ def test_health_omits_stats_when_not_ready(settings):
     client = TestClient(create_api(broken, include_web=False))
 
     response = client.get("/health")
-    assert response.status_code == 200
+    assert response.status_code == 503
     payload = response.json()
     assert payload["ready"] is False
     assert payload["startup_error"] == "MODEL NOT FOUND"
+    assert payload["database"] == {"status": "unavailable", "detail": "not_initialized"}
     assert "documents" not in payload
     assert "chunks" not in payload
+
+
+def test_health_reports_database_probe_failure(api_client, wired_services):
+    """Phase 8: /health re-checks the store live instead of trusting startup state."""
+
+    def _broken_count():
+        raise RuntimeError("simulated database failure")
+
+    wired_services.store.count = _broken_count
+
+    response = api_client.get("/health")
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["ready"] is False
+    assert payload["database"] == {"status": "unavailable", "detail": "RuntimeError"}
+
+
+def test_health_reports_llm_configuration_without_claiming_connectivity(api_client):
+    response = api_client.get("/health")
+    assert response.status_code == 200
+    llm = response.json()["llm"]
+    assert llm["provider"]
+    assert isinstance(llm["configured"], bool)
+    assert "connectivity is verified when a question is asked" in llm["note"]
 
 
 def test_openapi_documents_response_schemas(api_client):
