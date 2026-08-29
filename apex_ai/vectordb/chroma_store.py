@@ -291,7 +291,7 @@ class ChromaVectorStore:
                 fix="Check logs/apex.log.",
             ) from error
         self.version += 1
-        log.info("Deleted document %s (%d chunks removed)", document_id, removed)
+        log.info("Deleted document %s (%d chunks removed)", document_id[:12], removed)
         return removed
 
     def list_documents(self) -> list[DocumentRecord]:
@@ -322,7 +322,10 @@ class ChromaVectorStore:
                     start, end = int(page_start), int(page_end or page_start)
                     record.pages.update(range(start, end + 1))
                 except (TypeError, ValueError):
-                    log.warning("Ignoring invalid page metadata for document %s", doc_id)
+                    log.warning(
+                        "Ignoring invalid page metadata for document %s",
+                        str(doc_id)[:12],
+                    )
         return sorted(records.values(), key=lambda r: r.name.lower())
 
     def count(self) -> int:

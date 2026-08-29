@@ -445,5 +445,9 @@ class Chunker:
                 )
             )
 
-        log.info("Chunked %s into %d chunk(s)", document.document_name, len(chunks))
+        log.info(
+            "Chunked document %s into %d chunk(s)",
+            document.document_id[:12],
+            len(chunks),
+        )
         return chunks

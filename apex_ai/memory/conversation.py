@@ -42,9 +42,19 @@ class ConversationMemory:
             backup = self.path.with_suffix(".corrupt.bak")
             try:
                 shutil.move(str(self.path), backup)
-                log.warning("Conversation memory was unreadable (%s); backed up to %s", error, backup)
-            except OSError:
-                log.warning("Conversation memory was unreadable: %s", error)
+                log.warning(
+                    "Conversation memory was unreadable and was backed up "
+                    "(error_type=%s, backup=%s)",
+                    type(error).__name__,
+                    backup.name,
+                )
+            except OSError as backup_error:
+                log.warning(
+                    "Conversation memory was unreadable and could not be backed up "
+                    "(read_error_type=%s, backup_error_type=%s)",
+                    type(error).__name__,
+                    type(backup_error).__name__,
+                )
             self.turns = []
 
     def save(self) -> None:
@@ -54,7 +64,10 @@ class ConversationMemory:
                 json.dumps(self.turns, indent=2, ensure_ascii=False), encoding="utf-8"
             )
         except OSError as error:
-            log.error("Could not save conversation memory: %s", error)
+            log.error(
+                "Could not save conversation memory (error_type=%s)",
+                type(error).__name__,
+            )
 
     # -- operations -----------------------------------------------------------
 

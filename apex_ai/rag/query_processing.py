@@ -171,7 +171,10 @@ class QueryProcessor:
             term for term in self._protected_terms(source) if term.casefold() not in candidate.casefold()
         ]
         if missing:
-            log.warning("Rejected query rewrite that dropped protected term(s): %s", missing)
+            log.warning(
+                "Rejected query rewrite after %d protected term(s) were dropped",
+                len(missing),
+            )
             return None
         return candidate
 
@@ -204,7 +207,10 @@ class QueryProcessor:
         except Exception as error:
             if trace is not None:
                 trace.errors.append(f"llm_rewrite: {type(error).__name__}: {error}")
-            log.warning("Query rewrite failed; deterministic query remains available: %s", error)
+            log.warning(
+                "Query rewrite failed; deterministic query remains available (error_type=%s)",
+                type(error).__name__,
+            )
             return None
 
     def _decompose(
@@ -243,15 +249,19 @@ class QueryProcessor:
                         "llm_decomposition: output rejected after protected terms were dropped"
                     )
                 log.warning(
-                    "Rejected query decomposition that dropped protected term(s): %s",
-                    missing,
+                    "Rejected query decomposition after %d protected term(s) were dropped",
+                    len(missing),
                 )
                 return []
             return subqueries
         except Exception as error:
             if trace is not None:
                 trace.errors.append(f"llm_decomposition: {type(error).__name__}: {error}")
-            log.warning("Query decomposition failed; deterministic queries remain available: %s", error)
+            log.warning(
+                "Query decomposition failed; deterministic queries remain available "
+                "(error_type=%s)",
+                type(error).__name__,
+            )
             return []
 
     # -- public API ------------------------------------------------------
@@ -298,7 +308,11 @@ class QueryProcessor:
                 break
 
         trace.queries = queries
-        log.debug("Retrieval queries: %s", queries)
+        log.debug(
+            "Prepared %d retrieval query variant(s) with %d strategy step(s)",
+            len(queries),
+            len(trace.strategies),
+        )
         return queries, trace
 
     def expand(self, question: str, history: list[dict] | None = None) -> list[str]:

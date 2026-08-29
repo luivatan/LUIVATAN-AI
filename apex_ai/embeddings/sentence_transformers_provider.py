@@ -101,7 +101,10 @@ class SentenceTransformerProvider(EmbeddingProvider):
             log.info("Embedding model '%s' loaded from local cache.", self.model_name)
             return model
         except Exception as cache_error:
-            log.debug("Local-cache load failed: %s", cache_error)
+            log.debug(
+                "Local embedding-cache load failed (error_type=%s)",
+                type(cache_error).__name__,
+            )
             if offline or state["env"]["HF_HUB_OFFLINE"] == "1":
                 raise self._not_found_error() from cache_error
         finally:
@@ -110,9 +113,8 @@ class SentenceTransformerProvider(EmbeddingProvider):
         # Attempt 2: allow a one-time download (logged, never silent).
         try:
             log.warning(
-                "Embedding model '%s' not in local cache; downloading once into %s.",
+                "Embedding model '%s' is not cached; attempting the permitted download.",
                 self.model_name,
-                os.environ.get("HF_HOME", "~/.cache/huggingface"),
             )
             model = SentenceTransformer(self.model_name)
             log.info("Embedding model '%s' downloaded and cached.", self.model_name)

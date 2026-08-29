@@ -14,12 +14,13 @@ the precise fix instead of crashing. Chat/ingest callbacks check
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from apex_ai.config.settings import Settings, with_overrides
 from apex_ai.core.errors import UNEXPECTED_ERROR_MESSAGE, ApexError
-from apex_ai.core.logging import get_logger, setup_logging
+from apex_ai.core.logging import get_logger, log_event, setup_logging
 from apex_ai.memory.confirmation import MemoryConfirmationService
 from apex_ai.memory.conversation import ConversationMemory
 from apex_ai.memory.extraction import MemoryCandidateExtractor
@@ -71,7 +72,13 @@ class ApexServices:
         from apex_ai.llm import reset_active_provider
 
         reset_active_provider()
-        log.info("Active model switched to %s", resolved)
+        log_event(
+            log,
+            logging.INFO,
+            "model.selected",
+            "Active model switched",
+            model=resolved.name,
+        )
         return str(resolved)
 
     def active_llm(self):
@@ -121,21 +128,42 @@ def build_services(
             memory_extractor,
             long_term_memory,
         )
-        log.info("Long-term memory store ready: %d item(s)", item_count)
+        log_event(
+            log,
+            logging.INFO,
+            "memory.store_ready",
+            "Long-term memory store ready",
+            item_count=item_count,
+        )
         if long_term_memory.removed_unsafe_on_startup:
-            log.warning(
-                "Removed %d unsafe long-term memory record(s) during startup",
-                long_term_memory.removed_unsafe_on_startup,
+            log_event(
+                log,
+                logging.WARNING,
+                "memory.unsafe_records_removed",
+                "Removed unsafe long-term memory records during startup",
+                removed_count=long_term_memory.removed_unsafe_on_startup,
             )
     except ApexError as error:
         services._extras["long_term_memory_error"] = error.public_message()
-        log.warning(
-            "Long-term memory unavailable; core services will continue:\n%s",
-            error.user_message(),
+        log_event(
+            log,
+            logging.WARNING,
+            "memory.store_unavailable",
+            "Long-term memory unavailable; core services will continue",
+            exc_info=True,
+            error_code=error.code,
+            error_type=type(error).__name__,
+            public_guidance=error.public_message(),
         )
-    except Exception:  # defensive optional-component boundary
+    except Exception:  # noqa: BLE001 - defensive optional-component boundary
         services._extras["long_term_memory_error"] = UNEXPECTED_ERROR_MESSAGE
-        log.exception("Unexpected long-term-memory initialization failure")
+        log_event(
+            log,
+            logging.ERROR,
+            "memory.store_initialization_failed",
+            "Unexpected long-term-memory initialization failure",
+            exc_info=True,
+        )
 
     try:
         settings.database_path.mkdir(parents=True, exist_ok=True)
@@ -184,18 +212,36 @@ def build_services(
             query_processor=services.query_processor,
             medical_mode=settings.medical_mode,
         )
-        log.info(
-            "Apex AI services ready: %d document(s), %d chunk(s), reranker=%s",
-            len(services.ingestion.list_documents()),
-            services.store.count(),
-            services.reranker.name,
+        log_event(
+            log,
+            logging.INFO,
+            "runtime.ready",
+            "Apex AI services ready",
+            document_count=len(services.ingestion.list_documents()),
+            chunk_count=services.store.count(),
+            reranker=services.reranker.name,
         )
     except ApexError as error:
         services.startup_error = error.public_message()
-        log.error("Startup problem:\n%s", error.user_message())
-    except Exception:  # truly unexpected
+        log_event(
+            log,
+            logging.ERROR,
+            "runtime.startup_blocked",
+            "Apex AI startup was blocked by an expected error",
+            exc_info=True,
+            error_code=error.code,
+            error_type=type(error).__name__,
+            public_guidance=error.public_message(),
+        )
+    except Exception:  # noqa: BLE001 - final startup boundary
         services.startup_error = UNEXPECTED_ERROR_MESSAGE
-        log.exception("Unexpected startup failure")
+        log_event(
+            log,
+            logging.ERROR,
+            "runtime.startup_failed",
+            "Unexpected startup failure",
+            exc_info=True,
+        )
     return services
 
 

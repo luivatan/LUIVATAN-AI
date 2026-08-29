@@ -13,10 +13,11 @@ always one of the variants.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 
-from apex_ai.core.logging import get_logger
+from apex_ai.core.logging import get_logger, log_event
 from apex_ai.core.types import RetrievedChunk
 from apex_ai.retrieval.keyword import BM25Index
 
@@ -193,7 +194,10 @@ class HybridRetriever:
             except Exception as error:  # one channel may degrade independently
                 vector_hits = []
                 trace.errors.append(f"semantic: {type(error).__name__}: {error}")
-                log.warning("Semantic retrieval failed; continuing with BM25: %s", error)
+                log.warning(
+                    "Semantic retrieval failed; continuing with BM25 (error_type=%s)",
+                    type(error).__name__,
+                )
             semantic_elapsed += time.perf_counter() - stage_start
             vector_hits = [
                 _copy_for_channel(
@@ -210,7 +214,10 @@ class HybridRetriever:
             except Exception as error:  # optional lexical channel must not break RAG
                 keyword_hits = []
                 trace.errors.append(f"keyword: {type(error).__name__}: {error}")
-                log.warning("Keyword retrieval failed; continuing with vectors: %s", error)
+                log.warning(
+                    "Keyword retrieval failed; continuing with vectors (error_type=%s)",
+                    type(error).__name__,
+                )
             keyword_elapsed += time.perf_counter() - stage_start
             keyword_hits = [
                 _copy_for_channel(
@@ -265,9 +272,13 @@ class HybridRetriever:
                 }
                 for rank, chunk in enumerate(fused, start=1)
             ]
-        log.debug(
-            "Hybrid retrieval: %d query variant(s), %d fused candidate(s)",
-            query_count,
-            len(fused),
+        log_event(
+            log,
+            logging.DEBUG,
+            "retrieval.completed",
+            "Hybrid retrieval completed",
+            query_variant_count=query_count,
+            fused_candidate_count=len(fused),
+            duration_ms=trace.timings_ms["total"],
         )
         return RetrievalRun(fused, trace)

@@ -149,7 +149,11 @@ class FallbackReranker(Reranker):
                 return self.primary.rerank(query, candidates)
             except Exception as error:  # noqa: BLE001 - optional model boundary
                 self._primary_failed = True
-                log.warning("Primary reranker unavailable; using %s: %s", self.fallback.name, error)
+                log.warning(
+                    "Primary reranker unavailable; using %s (error_type=%s)",
+                    self.fallback.name,
+                    type(error).__name__,
+                )
                 for candidate in candidates:
                     candidate.metadata["_reranker_fallback"] = (
                         f"{type(error).__name__}: {error}"

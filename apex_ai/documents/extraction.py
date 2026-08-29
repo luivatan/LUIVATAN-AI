@@ -118,7 +118,12 @@ def _extract_pdf(path, document_id: str, name: str) -> Document:
                 "OCRmyPDF or Tesseract), then upload the OCR'd file.",
         )
 
-    log.info("PDF %s: %d readable page(s), %d empty", name, len(pages), len(empty_pages))
+    log.info(
+        "PDF document %s: %d readable page(s), %d empty",
+        document_id[:12],
+        len(pages),
+        len(empty_pages),
+    )
     return Document(
         document_id=document_id,
         document_name=name,

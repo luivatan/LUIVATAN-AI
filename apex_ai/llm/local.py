@@ -94,7 +94,7 @@ class LocalLLMProvider(LLMProvider):
             kwargs["n_threads"] = self.settings.n_threads
 
         try:
-            with timed(log, f"loading {self.model_path.name}", level=logging.INFO):
+            with timed(log, "local model loading", level=logging.INFO):
                 self._model = Llama(**kwargs)
         except Exception as error:
             self._model = None

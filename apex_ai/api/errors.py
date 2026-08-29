@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -24,7 +25,7 @@ from apex_ai.core.errors import (
     SecurityError,
     sanitize_public_text,
 )
-from apex_ai.core.logging import get_logger
+from apex_ai.core.logging import get_logger, log_event
 
 log = get_logger("api.errors")
 
@@ -236,11 +237,14 @@ async def _apex_exception_handler(_request: Request, error: ApexError) -> JSONRe
 
 
 async def _unexpected_exception_handler(request: Request, error: Exception) -> JSONResponse:
-    log.error(
-        "Unhandled API failure for %s %s",
-        request.method,
-        request.url.path,
+    log_event(
+        log,
+        logging.ERROR,
+        "api.request_failed",
+        "Unhandled API request failure",
         exc_info=(type(error), error, error.__traceback__),
+        method=request.method,
+        http_path=request.url.path,
     )
     return _response(500, internal_error_problem())
 

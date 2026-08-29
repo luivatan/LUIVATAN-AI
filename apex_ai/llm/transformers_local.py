@@ -36,7 +36,7 @@ class TransformersProvider(LLMProvider):
             ) from error
 
         try:
-            with timed(log, f"loading transformers model {self.model_id}"):
+            with timed(log, "transformers model loading"):
                 import torch
 
                 # Load both artifacts explicitly so APEX_OFFLINE is enforced at

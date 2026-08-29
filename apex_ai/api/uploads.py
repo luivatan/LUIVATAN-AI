@@ -79,8 +79,11 @@ def create_upload_router(services) -> APIRouter:
         finally:
             try:
                 await file.close()
-            except Exception:  # noqa: BLE001 - framework-owned cleanup boundary
-                log.warning("Could not close an uploaded file handle")
+            except Exception as error:  # noqa: BLE001 - framework-owned cleanup boundary
+                log.warning(
+                    "Could not close an uploaded file handle (error_type=%s)",
+                    type(error).__name__,
+                )
             if staging is not None:
                 shutil.rmtree(staging, ignore_errors=True)
 

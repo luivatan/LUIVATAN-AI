@@ -110,7 +110,10 @@ class IngestionService:
                 info = DocumentInfo(**item)
                 self._registry[info.document_id] = info
         except (json.JSONDecodeError, OSError, TypeError) as error:
-            log.warning("Document registry unreadable (%s); starting fresh.", error)
+            log.warning(
+                "Document registry unreadable; starting fresh (error_type=%s).",
+                type(error).__name__,
+            )
             self._registry = {}
 
     def _save_registry(self) -> None:
@@ -145,7 +148,7 @@ class IngestionService:
         document_id = sha256_file(source)
 
         if not force and self.store.has_document(document_id):
-            log.info("Duplicate upload skipped: %s (%s)", safe_name, document_id[:12])
+            log.info("Duplicate document skipped: %s", document_id[:12])
             return IngestResult(
                 status="duplicate",
                 document_name=safe_name,
@@ -167,7 +170,7 @@ class IngestionService:
         if source.resolve() != destination:
             shutil.copy2(source, destination)
 
-        with timed(log, f"ingest {safe_name}", level=logging.INFO):
+        with timed(log, "document ingestion", level=logging.INFO):
             document = extract_document(destination)
             chunks = self.chunker.build_chunks(document)
             if not chunks:

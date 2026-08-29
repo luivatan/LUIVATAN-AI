@@ -8,13 +8,14 @@ follow-up but is never document evidence and can never become a citation.
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from apex_ai.core.errors import ApexError, ProviderError
-from apex_ai.core.logging import get_logger
+from apex_ai.core.logging import get_logger, log_event
 from apex_ai.core.types import AnswerResult, Citation, RetrievedChunk
 from apex_ai.memory.context import ConversationContext, build_conversation_context
 from apex_ai.rag.context_builder import BuiltContext, build_context
@@ -323,7 +324,10 @@ class RagEngine:
                 # model disappears, cannot load offline, or fails at runtime.
                 message = f"reranker: {type(error).__name__}: {error}"
                 turn.errors.append(message)
-                log.warning("Reranker failed; using fused retrieval order: %s", error)
+                log.warning(
+                    "Reranker failed; using fused retrieval order (error_type=%s)",
+                    type(error).__name__,
+                )
                 turn.reranked_candidates = list(turn.candidates)
         else:
             turn.reranked_candidates = list(turn.candidates)
@@ -360,12 +364,15 @@ class RagEngine:
 
     def _insufficient(self, turn: PreparedTurn, reason: str | None = None) -> AnswerResult:
         reason = reason or turn.support_reason
-        log.info(
-            "Insufficient evidence (%s): semantic=%.3f threshold=%.2f lexical=%.3f",
-            reason,
-            turn.confidence,
-            self.settings.min_similarity,
-            turn.lexical_support,
+        log_event(
+            log,
+            logging.INFO,
+            "rag.insufficient_evidence",
+            "Answer generation skipped because evidence was insufficient",
+            reason=reason,
+            semantic_score=round(turn.confidence, 4),
+            semantic_threshold=self.settings.min_similarity,
+            lexical_score=round(turn.lexical_support, 4),
         )
         timings = dict(turn.timings)
         timings.setdefault("generation", 0.0)
@@ -435,7 +442,14 @@ class RagEngine:
         full_answer = f"{answer}\n\n{result.sources_block}" if citations else answer
         if update_memory and self.memory is not None:
             self.memory.add(turn.question, full_answer)
-        log.info("Answered question (%d evidence chunk(s), %.2fs)", len(citations), elapsed)
+        log_event(
+            log,
+            logging.INFO,
+            "rag.answer_completed",
+            "Grounded answer completed",
+            evidence_chunk_count=len(citations),
+            duration_ms=round(elapsed * 1000, 3),
+        )
         return result
 
     @staticmethod
@@ -513,7 +527,7 @@ class RagEngine:
                     **self._generation_kwargs(),
                 )
             except Exception as error:
-                log.error("Debug generation failed: %s", error)
+                log.exception("Debug generation failed")
                 raise self._provider_failure(error) from error
             result = self._finalize(
                 turn,
@@ -578,7 +592,7 @@ class RagEngine:
         try:
             answer = self.llm.generate(messages=messages, **self._generation_kwargs())
         except Exception as error:
-            log.error("Generation failed: %s", error)
+            log.exception("Generation failed")
             raise self._provider_failure(error) from error
         return self._finalize(
             turn,
@@ -624,7 +638,7 @@ class RagEngine:
                 parts.append(token)
                 yield {"type": "token", "text": token}
         except Exception as error:
-            log.error("Streaming generation failed: %s", error)
+            log.exception("Streaming generation failed")
             raise self._provider_failure(error) from error
 
         result = self._finalize(

@@ -174,9 +174,9 @@ def _ensure_docs_ingested(services, docs_dir: Path, items: list[dict]) -> None:
             if candidate.name.lower() not in indexed_names or _force(item_for(name, items)):
                 from apex_ai.core.logging import timed
 
-                with timed(log, f"ingesting {candidate.name}", level=logging.INFO):
+                with timed(log, "evaluation document ingestion", level=logging.INFO):
                     services.ingestion.ingest_path(candidate, force=False)
-                log.info("Ingested %s", candidate.name)
+                log.info("Ingested one evaluation document")
 
 
 def _force(item: dict | None) -> bool:

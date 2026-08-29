@@ -53,7 +53,7 @@ def main() -> int:
         except ApexError as error:
             print(f"[error] {path.name}:\n{error.public_message()}\n")
         except Exception:
-            log.exception("Unexpected batch-ingest failure for %s", path.name)
+            log.exception("Unexpected batch-ingest failure for one document")
             print(f"[error] {path.name}:\n{UNEXPECTED_ERROR_MESSAGE}\n")
 
     try:
