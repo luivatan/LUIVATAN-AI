@@ -305,6 +305,9 @@ python scripts/make_test_fixtures.py  # regenerate tests/data (needs fpdf2)
 Logging goes to `logs/apex.log` (rotating) with INFO console output; ingestion,
 retrieval, model loads, and timings are logged, document *contents* are not.
 
+New to this repository? See [`CONTRIBUTING.md`](CONTRIBUTING.md) for a beginner-friendly
+setup walkthrough and the roadmap-phase development workflow this project follows.
+
 ## Troubleshooting
 
 | Problem | Meaning / fix |

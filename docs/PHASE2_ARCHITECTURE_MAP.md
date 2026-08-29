@@ -612,9 +612,10 @@ One machine
 
 ### Not present
 
-The repository has no Dockerfile, Compose file, Procfile, package manifest, CI workflow,
-reverse proxy, TLS setup, process supervisor, migration runner, backup job, monitoring,
-error tracking, or cloud deployment manifest.
+The repository has no Dockerfile, Compose file, Procfile, package manifest, reverse
+proxy, TLS setup, process supervisor, migration runner, backup job, monitoring, error
+tracking, or cloud deployment manifest. (A CI workflow now exists as of Phase 9 —
+see section 19 — but it only runs tests/lint; it is not a deployment pipeline.)
 
 ### Scaling constraints
 
@@ -704,7 +705,26 @@ phase is accepted, create a clean environment, resolve dependencies, run the com
 offline suite, and record the exact command/result. Real-model and browser-device checks
 remain separate from deterministic unit/integration tests.
 
-## 19. Phase 2 conclusion
+## 19. Amendments after later phases
+
+This map is pinned to its Phase 2 baseline (`6d0d5cb`) on purpose — it is a snapshot,
+not a living document — but a few of its facts have since been superseded by
+completed, tested phases. Rather than silently let those go stale, they're corrected
+here with a pointer to the phase that changed them:
+
+| Section 17/section 6 claim at Phase 2 | Current reality | Changed by |
+|---|---|---|
+| "No install lock, CI, migrations, backup, deployment, or monitoring architecture exists" | `.github/workflows/tests.yml` runs the full offline suite plus Ruff on every push/PR; `pyproject.toml` gives pytest real configuration | Phase 9 |
+| "Provider readiness and privacy are not represented accurately in the UI/health API" | `/health` now live-probes the vector store on every request (not just startup state) and returns `503` when that check fails; it also reports `llm.configured` with an explicit note that connectivity is *not* verified there (still true — see that phase's stated boundary) | Phase 8 |
+| `GET /health` row in the section 6 API map ("Combined runtime status") | Also returns `database` and `llm` component objects; every route in the API now declares a `response_model` (`apex_ai/api/schemas.py`) so `/openapi.json` documents real response shapes instead of bare dicts | Phases 7–8 |
+| Section 4's "current machine has no `.venv`... a current full pytest run... is UNKNOWN" | Resolved for CI (see above); a contributor's local environment is still their own responsibility — see [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Phase 9 |
+
+Everything else in this document — the component/trust-boundary maps, data schemas,
+security posture, deployment topology, and the architectural invariants in section
+16 — remained accurate as of Phase 9 and is not restated in Phase 7/8/9's own docs;
+read those alongside this map, not instead of it.
+
+## 20. Phase 2 conclusion
 
 Apex AI currently has a coherent modular single-process RAG core and a same-origin
 chat-first browser application. Its supported trust boundary is one trusted local user on
