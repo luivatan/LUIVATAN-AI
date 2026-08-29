@@ -8,6 +8,7 @@ uploads directory) and provide content hashing used for duplicate detection.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import unicodedata
 from pathlib import Path
@@ -17,6 +18,28 @@ from apex_ai.core.errors import SecurityError
 _UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9._ ()\-\[\]]")
 _MULTI = re.compile(r"\s+")
 _SEPARATORS = re.compile(r"[/\\]")  # both POSIX and Windows separators
+
+# Phase 57: uploaded documents and the vector index derived from them can
+# hold private (often medical) content, now additionally partitioned by
+# account (Phase 55). Owner-only permissions are the storage-side half of
+# that isolation - metadata filtering keeps one account from *querying*
+# another's data, but a shared filesystem location readable by any local
+# account or process would still leak the raw bytes underneath it.
+PRIVATE_DIR_MODE = 0o700
+PRIVATE_FILE_MODE = 0o600
+
+
+def restrict_to_owner(path: Path) -> None:
+    """Best-effort: remove group/other access from a directory or file that
+    may hold document content. Never raises - a chmod failure (an
+    unsupported filesystem, Windows, a restricted container) must not break
+    the upload/ingest it is hardening; the path traversal and filename
+    protections below remain the primary defense either way."""
+    try:
+        mode = PRIVATE_DIR_MODE if path.is_dir() else PRIVATE_FILE_MODE
+        os.chmod(path, mode)
+    except OSError:
+        pass
 
 
 def sanitize_filename(filename: str) -> str:

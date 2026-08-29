@@ -34,6 +34,7 @@ from apex_ai.rag.query_processing import QueryProcessor
 from apex_ai.retrieval.keyword import BM25Index
 from apex_ai.retrieval.pipeline import HybridRetriever
 from apex_ai.retrieval.reranker import make_reranker
+from apex_ai.security.files import restrict_to_owner
 from apex_ai.security.memory import MemorySafetyPolicy
 
 log = get_logger("runtime")
@@ -223,6 +224,10 @@ def build_services(
     try:
         settings.database_path.mkdir(parents=True, exist_ok=True)
         settings.upload_dir.mkdir(parents=True, exist_ok=True)
+        # Phase 57: these hold every account's document content and the
+        # vector index derived from it - owner-only permissions, best-effort.
+        restrict_to_owner(settings.database_path)
+        restrict_to_owner(settings.upload_dir)
 
         if embedding_factory is None:
             from apex_ai.embeddings import SentenceTransformerProvider

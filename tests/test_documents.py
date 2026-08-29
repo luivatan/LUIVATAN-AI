@@ -7,7 +7,7 @@ import pytest
 from apex_ai.core.errors import DocumentProcessingError
 from apex_ai.documents.chunking import Chunker
 from apex_ai.documents.extraction import extract_document
-from apex_ai.security.files import sanitize_filename
+from apex_ai.security.files import restrict_to_owner, sanitize_filename
 from tests.conftest import DATA_DIR
 
 
@@ -149,3 +149,21 @@ def test_sanitize_filename_blocks_traversal():
     assert sanitize_filename("..\\..\\windows\\system32") == "system32"
     assert sanitize_filename("") == "file"
     assert "/" not in sanitize_filename("a/b/c.pdf")
+
+
+def test_restrict_to_owner_removes_group_and_other_access(tmp_path):
+    import stat
+
+    directory = tmp_path / "private-dir"
+    directory.mkdir()
+    restrict_to_owner(directory)
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+
+    file_path = tmp_path / "private-file.txt"
+    file_path.write_text("content")
+    restrict_to_owner(file_path)
+    assert stat.S_IMODE(file_path.stat().st_mode) == 0o600
+
+
+def test_restrict_to_owner_never_raises_on_a_missing_path(tmp_path):
+    restrict_to_owner(tmp_path / "does-not-exist")

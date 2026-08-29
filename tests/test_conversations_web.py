@@ -629,6 +629,40 @@ def test_browser_upload_rejects_unsupported_type(web_client):
     assert response.status_code == 415
 
 
+def test_browser_upload_rejects_oversized_file(web_client, web_services):
+    """Phase 57: the streaming size check aborts mid-upload rather than
+    buffering the whole file first, and no partial file is left indexed."""
+    from apex_ai.config.settings import with_overrides
+
+    web_services.settings = with_overrides(web_services.settings, max_upload_mb=1)
+    oversized = b"x" * (2 * 1024 * 1024)
+
+    response = web_client.post(
+        "/documents/upload",
+        files={"file": ("too-big.txt", oversized, "text/plain")},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "upload_too_large"
+    documents = {d["name"] for d in web_client.get("/documents").json()}
+    assert "too-big.txt" not in documents
+
+
+def test_browser_upload_sanitizes_a_path_traversal_filename(web_client):
+    """Phase 57 end-to-end: a filename attempting to escape the uploads
+    directory through the real HTTP API is sanitized, not honored."""
+    content = (DATA_DIR / "burn_care.md").read_bytes()
+
+    response = web_client.post(
+        "/documents/upload",
+        files={"file": ("../../../../etc/passwd.md", content, "text/markdown")},
+    )
+
+    assert response.status_code == 200
+    documents = web_client.get("/documents").json()
+    assert all("/" not in d["name"] and ".." not in d["name"] for d in documents)
+
+
 def test_uploaded_documents_are_isolated_between_accounts(web_services):
     """Phase 55 end-to-end: a real second account, reached through the actual
     HTTP API (not a direct store call), must never see or retrieve-cite the

@@ -26,7 +26,12 @@ from apex_ai.core.logging import get_logger, timed
 from apex_ai.documents.chunking import Chunker
 from apex_ai.documents.extraction import extract_document, supported
 from apex_ai.documents.models import utc_now_iso
-from apex_ai.security.files import ensure_within, sanitize_filename, sha256_file
+from apex_ai.security.files import (
+    ensure_within,
+    restrict_to_owner,
+    sanitize_filename,
+    sha256_file,
+)
 
 log = get_logger("ingest")
 
@@ -178,6 +183,7 @@ class IngestionService:
         # suffix instead of silently making the older registry entry point at new bytes.
         user_upload_dir = self.settings.upload_dir / user_id
         user_upload_dir.mkdir(parents=True, exist_ok=True)
+        restrict_to_owner(user_upload_dir)
         safe_name = sanitize_filename(source.name)
         document_id = sha256_file(source)
 
@@ -201,6 +207,7 @@ class IngestionService:
                 )
         if source.resolve() != destination:
             shutil.copy2(source, destination)
+        restrict_to_owner(destination)
 
         with timed(log, "document ingestion", level=logging.INFO):
             document = extract_document(destination)

@@ -14,7 +14,7 @@ from apex_ai.api.errors import APIError, service_not_ready_error
 from apex_ai.api.schemas import IngestOut, UploadOut
 from apex_ai.core.logging import get_logger
 from apex_ai.documents.extraction import SUPPORTED_EXTENSIONS
-from apex_ai.security.files import sanitize_filename
+from apex_ai.security.files import restrict_to_owner, sanitize_filename
 
 log = get_logger("api.uploads")
 
@@ -48,6 +48,7 @@ def create_upload_router(services) -> APIRouter:
             staging = services.settings.upload_dir / ".staging" / str(uuid.uuid4())
             staged_file = staging / safe_name
             staging.mkdir(parents=True, exist_ok=False)
+            restrict_to_owner(staging)
             size = 0
             with staged_file.open("wb") as destination:
                 while chunk := await file.read(1024 * 1024):
@@ -64,6 +65,7 @@ def create_upload_router(services) -> APIRouter:
                             code="upload_too_large",
                         )
                     destination.write(chunk)
+            restrict_to_owner(staged_file)
             if size == 0:
                 raise APIError(
                     400,
