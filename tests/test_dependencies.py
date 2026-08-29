@@ -13,6 +13,7 @@ from packaging.utils import canonicalize_name
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 RUNTIME_DEPENDENCIES = {
+    "argon2-cffi",
     "chromadb",
     "fastapi",
     "gradio",
@@ -42,6 +43,7 @@ DEVELOPMENT_DEPENDENCIES = {
 }
 
 IMPORT_DISTRIBUTIONS = {
+    "argon2": "argon2-cffi",
     "chromadb": "chromadb",
     "dotenv": "python-dotenv",
     "fastapi": "fastapi",

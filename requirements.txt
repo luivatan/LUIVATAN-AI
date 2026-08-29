@@ -37,5 +37,8 @@ uvicorn>=0.29,<1            # ASGI server used by the web entry points
 pydantic>=2.6,<3            # API request/response validation
 python-multipart>=0.0.18,<1 # streamed browser file uploads
 
+# --- accounts / authentication (Phase 51+) --------------------------------
+argon2-cffi>=23,<26         # Argon2id password hashing (OWASP-recommended default)
+
 # --- configuration -------------------------------------------------------
 python-dotenv>=1.0,<2       # load untracked .env configuration files

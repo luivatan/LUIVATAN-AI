@@ -79,6 +79,7 @@ def settings(tmp_path) -> Settings:
         memory_path=tmp_path / "memory.json",
         conversation_db_path=tmp_path / "conversations.db",
         long_term_memory_db_path=tmp_path / "long_term_memory.db",
+        users_db_path=tmp_path / "users.db",
         embedding_model="hashing-256-v1",
         top_k=6,
         rerank_top_k=3,

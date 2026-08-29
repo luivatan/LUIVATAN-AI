@@ -12,6 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 _WEB_ROOT = Path(__file__).resolve().parent
 _STATIC = _WEB_ROOT / "static"
 _INDEX = _WEB_ROOT / "templates" / "index.html"
+_LOGIN = _WEB_ROOT / "templates" / "login.html"
 
 
 class BrowserSecurityHeaders(BaseHTTPMiddleware):
@@ -49,6 +50,14 @@ def mount_web_ui(app: FastAPI) -> None:
     def web_index():
         return FileResponse(
             _INDEX,
+            media_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/login", include_in_schema=False)
+    def web_login():
+        return FileResponse(
+            _LOGIN,
             media_type="text/html",
             headers={"Cache-Control": "no-store"},
         )

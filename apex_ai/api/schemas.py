@@ -138,6 +138,14 @@ class LlmStatusOut(BaseModel):
     note: str
 
 
+class UserOut(BaseModel):
+    id: str
+    email: str
+    display_name: str
+    created_at: str
+    is_default_local: bool
+
+
 class HealthOut(BaseModel):
     app: str
     version: str
@@ -199,4 +207,5 @@ __all__ = [
     "RemovedOut",
     "StopOut",
     "UploadOut",
+    "UserOut",
 ]

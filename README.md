@@ -91,6 +91,10 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   headings, lists, tables, and links render alongside fenced code blocks with
   dependency-free syntax highlighting and copy controls; a strict same-origin Content
   Security Policy is applied.
+- **Real accounts** — Argon2id password hashing, server-side sessions, sign-up/sign-in
+  at `/login`. A single local machine needs no login screen by default (an
+  auto-provisioned local account); a real sign-in always takes precedence. Data
+  isolation between accounts is not implemented yet — see Limitations.
 - **Compatibility interfaces** — the original JSON routes, terminal chat, and preserved
   Gradio interface remain available.
 
@@ -101,6 +105,7 @@ apex_ai/
 ├── config/       Settings from env/.env (APEX_* variables), path resolution
 ├── core/         ApexError hierarchy (WHAT/WHY/FIX), logging, shared types
 ├── security/     filename sanitization, path containment, hashing
+├── auth/         accounts, Argon2id password hashing, sessions (Phase 51/52)
 ├── documents/    extraction (PDF/TXT/MD/JSON), chunker, ingestion service
 ├── embeddings/   EmbeddingProvider (sentence-transformers, hashing-for-tests)
 ├── llm/          LLMProvider: llama.cpp local, Ollama, OpenAI-compatible, transformers
@@ -214,6 +219,26 @@ storage-boundary safety policy in
 
 The compatibility endpoints `/query` and `/documents/ingest` remain unchanged.
 
+## Accounts
+
+Apex AI has real accounts, Argon2id password hashing, and server-side sessions
+(`data/users.db`), added in Phase 51/52. By default (`APEX_AUTO_LOGIN_LOCAL=1`) a
+single machine running Apex AI for one person needs no login screen: an
+unauthenticated browser request is transparently treated as an auto-provisioned
+default local account. Visit `/login` any time to create a real account or sign in
+as one explicitly — an explicit login always takes precedence over the local
+default. Set `APEX_AUTO_LOGIN_LOCAL=0` to require real sign-in for every request.
+
+| Method + path | Purpose |
+|---|---|
+| `POST /auth/signup` | create an account (email + password ≥ 8 chars), sets the session cookie |
+| `POST /auth/login` | sign in, sets the session cookie |
+| `POST /auth/logout` | invalidate the session server-side and clear the cookie |
+| `GET /auth/me` | current user (falls back to the default local account when `APEX_AUTO_LOGIN_LOCAL=1`) |
+
+**Not yet done:** conversations, memory, and documents are not scoped per account
+yet (Phase 54/55) — every account currently sees the same data. See Limitations.
+
 ## Configuration
 
 All configuration comes from environment variables or `.env` (see
@@ -244,6 +269,9 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_DATABASE_PATH` | `data/chroma` | vector store location |
 | `APEX_CONVERSATION_DB_PATH` | `data/conversations.db` | persistent conversation/history database |
 | `APEX_LONG_TERM_MEMORY_DB_PATH` | `data/long_term_memory.db` | separate explicit preference/context store; see `APEX_MEMORY_PROMPT_USE` |
+| `APEX_USERS_DB_PATH` | `data/users.db` | accounts + sessions (Phase 51/52) |
+| `APEX_SESSION_COOKIE_NAME` / `APEX_SESSION_TTL_DAYS` | `apex_session` / `30` | session cookie name and lifetime |
+| `APEX_AUTO_LOGIN_LOCAL` | `1` | `0` = require real sign-in for every request instead of the default-local-account fallback |
 | `APEX_MAX_UPLOAD_MB` | `50` | server-enforced size limit for each browser upload |
 | `APEX_OFFLINE` | `0` | `1` = never download, fail with clear errors instead |
 
@@ -350,9 +378,11 @@ setup walkthrough and the roadmap-phase development workflow this project follow
 - Context-window budgeting uses an approximate four-characters-per-token conversion;
   provider tokenizers can differ.
 - Existing chunks remain compatible but need re-indexing to gain schema-v2 page ranges.
-- This stage remains a single-user local application. Authentication and subscriptions
-  are intentionally deferred until the chat experience is validated; do not expose the
-  server to an untrusted network yet.
+- Real accounts, password hashing, and sessions exist (Phase 51/52 — see Accounts
+  below), but conversations, memory, and documents are not yet scoped per-user
+  (Phase 54/55, not done). Every account can currently see the same data. Do not
+  expose the server to an untrusted network or host multiple real accounts on one
+  instance until that isolation lands; subscriptions remain fully deferred.
 - Stop generation is cooperative and takes effect at the next token yielded by the
   configured provider. A provider blocked inside a long native call cannot be interrupted
   until it yields control.

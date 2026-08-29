@@ -9,3 +9,10 @@ testpaths = ["tests"]
 markers = [
     "integration: opt-in tests that need real downloaded models/network; not run by default (none exist yet — see tests/conftest.py).",
 ]
+
+[tool.ruff.lint.flake8-bugbear]
+# Phase 51/52: fastapi.Depends(...) as a parameter default is the framework's
+# required dependency-injection idiom, not the mutable-default-argument bug
+# B008 exists to catch — silence it for this one call rather than sprinkling
+# `# noqa: B008` on every route that takes a Depends(...) parameter.
+extend-immutable-calls = ["fastapi.Depends"]

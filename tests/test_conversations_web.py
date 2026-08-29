@@ -141,6 +141,18 @@ def test_web_shell_is_chat_first_and_has_security_headers(web_client):
     assert "default-src 'self'" in response.headers["content-security-policy"]
 
 
+def test_login_page_is_served_with_the_same_security_headers(web_client):
+    response = web_client.get("/login")
+    assert response.status_code == 200
+    assert "authForm" in response.text
+    assert "authEmail" in response.text
+    assert "authPassword" in response.text
+    assert "default-src 'self'" in response.headers["content-security-policy"]
+    login_js = web_client.get("/assets/login.js")
+    assert login_js.status_code == 200
+    assert "auth/login" in login_js.text and "auth/signup" in login_js.text
+
+
 def test_static_assets_include_responsive_themes_and_code_blocks(web_client):
     css = web_client.get("/assets/app.css")
     javascript = web_client.get("/assets/app.js")
@@ -171,6 +183,9 @@ def test_static_assets_include_responsive_themes_and_code_blocks(web_client):
     # Phase 49: conflict warning on the memory-confirmation card.
     assert ".memory-confirmation-conflict" in css.text
     assert "conflicts_with" in javascript.text
+    # Phase 52: account/sign-out section in Settings.
+    assert "function loadAccount" in javascript.text
+    assert "auth/logout" in javascript.text
 
 
 def test_streaming_chat_uses_real_engine_and_persists_verified_citations(web_client):

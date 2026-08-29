@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0b0d12">
+  <meta name="description" content="Sign in to Apex AI.">
+  <title>Sign in — Apex AI</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/login.js" defer></script>
+</head>
+<body>
+  <main class="auth-page">
+    <div class="auth-card">
+      <div class="welcome-mark" aria-hidden="true"><span>A</span></div>
+      <h1 id="authHeading">Sign in to Apex AI</h1>
+      <p id="authSubheading" class="auth-subtext">Your documents and conversations stay on this server.</p>
+
+      <form id="authForm" class="auth-form" novalidate>
+        <label class="auth-field">
+          <span>Email</span>
+          <input type="email" id="authEmail" name="email" autocomplete="email" required>
+        </label>
+        <label class="auth-field" id="authDisplayNameField" hidden>
+          <span>Name <small>(optional)</small></span>
+          <input type="text" id="authDisplayName" name="display_name" autocomplete="name" maxlength="100">
+        </label>
+        <label class="auth-field">
+          <span>Password</span>
+          <input type="password" id="authPassword" name="password" autocomplete="current-password" required minlength="8">
+        </label>
+        <p id="authError" class="auth-error" role="alert" hidden></p>
+        <button type="submit" class="primary-button auth-submit" id="authSubmit">
+          <span id="authSubmitLabel">Sign in</span>
+        </button>
+      </form>
+
+      <button type="button" class="quiet-button auth-toggle" id="authToggleMode">
+        Need an account? <b>Create one</b>
+      </button>
+    </div>
+  </main>
+</body>
+</html>

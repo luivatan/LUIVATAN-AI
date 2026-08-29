@@ -77,6 +77,7 @@ class Settings:
     long_term_memory_db_path: Path = field(
         default_factory=lambda: resolve_path("data/long_term_memory.db")
     )
+    users_db_path: Path = field(default_factory=lambda: resolve_path("data/users.db"))
 
     # --- embeddings ---------------------------------------------------
     embedding_model: str = "all-MiniLM-L6-v2"
@@ -141,9 +142,20 @@ class Settings:
     max_upload_mb: int = 50
     rag_debug: bool = False  # gated developer endpoint; never in normal chat payloads
 
+    # --- accounts / authentication (Phase 51+) ------------------------------
+    session_cookie_name: str = "apex_session"
+    session_ttl_days: int = 30
+    # When true (the default: a single machine running Apex AI for one person),
+    # an unauthenticated request is transparently treated as the auto-provisioned
+    # default local account instead of being rejected - no login screen needed
+    # for the common case. An explicit login for a *different* real account still
+    # takes precedence. Set to false to require real login for every request
+    # (a shared/hosted deployment with multiple real accounts).
+    auto_login_local: bool = True
+
     # --- server ------------------------------------------------------------
-    # Loopback is the safe default while inbound authentication is absent.
-    # Explicit deployments can opt into a wider bind with APEX_SERVER_NAME.
+    # Loopback is the safe default; a wider bind plus real accounts (Phase 51+)
+    # is a deliberate choice for a shared deployment, not the default posture.
     server_name: str = "127.0.0.1"
     server_port: int = 7860
 
@@ -235,6 +247,7 @@ def load_settings() -> Settings:
                 default="data/long_term_memory.db",
             )
         ),
+        users_db_path=resolve_path(_env("APEX_USERS_DB_PATH", default="data/users.db")),
         embedding_model=_env("APEX_EMBEDDING_MODEL", default="all-MiniLM-L6-v2"),
         embedding_batch_size=_bounded_int(
             _env("APEX_EMBEDDING_BATCH_SIZE", default="32"),
@@ -336,6 +349,9 @@ def load_settings() -> Settings:
         conversation_summary=_bool(_env("APEX_CONVERSATION_SUMMARY", default=""), False),
         max_upload_mb=max(1, _int(_env("APEX_MAX_UPLOAD_MB", default="50"), 50)),
         rag_debug=_bool(_env("APEX_RAG_DEBUG", default=""), False),
+        session_cookie_name=_env("APEX_SESSION_COOKIE_NAME", default="apex_session"),
+        session_ttl_days=max(1, _int(_env("APEX_SESSION_TTL_DAYS", default="30"), 30)),
+        auto_login_local=_bool(_env("APEX_AUTO_LOGIN_LOCAL", default=""), True),
         server_name=_env("APEX_SERVER_NAME", default="127.0.0.1"),
         server_port=_bounded_int(
             _env("APEX_SERVER_PORT", default="7860"),

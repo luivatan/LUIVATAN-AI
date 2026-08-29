@@ -18,6 +18,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from apex_ai.auth.service import AuthService
+from apex_ai.auth.sessions import SessionStore
+from apex_ai.auth.users import User, UserStore
 from apex_ai.config.settings import Settings, with_overrides
 from apex_ai.core.errors import UNEXPECTED_ERROR_MESSAGE, ApexError
 from apex_ai.core.logging import get_logger, log_event, setup_logging
@@ -54,6 +57,8 @@ class ApexServices:
     query_processor: Any = None
     engine: RagEngine | None = None
     models: ModelManager | None = None
+    auth: AuthService | None = None
+    default_local_user: User | None = None
     _extras: dict = field(default_factory=dict)
 
     @property
@@ -113,6 +118,47 @@ def build_services(
         memory_safety=memory_safety,
         memory_extractor=memory_extractor,
     )
+
+    # Phase 51/52: accounts/sessions are foundational, not optional like the
+    # memory/RAG boundaries below - a broken accounts database is a real
+    # startup blocker, the same way a broken vector store already is.
+    try:
+        auth = AuthService(
+            UserStore(settings.users_db_path),
+            SessionStore(settings.users_db_path),
+            session_ttl_days=settings.session_ttl_days,
+        )
+        services.auth = auth
+        services.default_local_user = auth.ensure_default_local_account()
+        log_event(
+            log,
+            logging.INFO,
+            "auth.ready",
+            "Accounts/sessions ready",
+            user_count=auth.users.count(),
+        )
+    except ApexError as error:
+        services.startup_error = error.public_message()
+        log_event(
+            log,
+            logging.ERROR,
+            "auth.startup_blocked",
+            "Accounts/sessions startup was blocked by an expected error",
+            exc_info=True,
+            error_code=error.code,
+            error_type=type(error).__name__,
+        )
+        return services
+    except Exception:  # noqa: BLE001 - final startup boundary for this component
+        services.startup_error = UNEXPECTED_ERROR_MESSAGE
+        log_event(
+            log,
+            logging.ERROR,
+            "auth.startup_failed",
+            "Unexpected accounts/sessions startup failure",
+            exc_info=True,
+        )
+        return services
 
     # Long-term memory is a separate optional persistence boundary. Phase 42
     # does not inject it into prompts, and a failure here must not disable the

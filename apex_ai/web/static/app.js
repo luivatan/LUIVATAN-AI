@@ -347,7 +347,7 @@ function showView(name) {
   if (name === "chat") $("#topbarTitle").textContent = state.currentConversation?.title || "New conversation";
   else $("#topbarTitle").textContent = name[0].toUpperCase() + name.slice(1);
   if (name === "documents") loadDocuments();
-  if (name === "settings") loadMemories();
+  if (name === "settings") { loadMemories(); loadAccount(); }
   closeMobileSidebar();
 }
 
@@ -793,6 +793,24 @@ function confirmAction(title, text, actionLabel) {
   });
 }
 
+async function loadAccount() {
+  try {
+    const user = await api("/auth/me");
+    $("#accountDetails").innerHTML = [
+      ["Signed in as", user.display_name || user.email], ["Email", user.email],
+    ].map(([label, value]) => `<div class="backend-item"><span>${escapeHTML(label)}</span><strong title="${escapeHTML(value)}">${escapeHTML(value)}</strong></div>`).join("");
+    $("#accountActions").hidden = false;
+  } catch (error) {
+    $("#accountDetails").innerHTML = `<div class="error-message">${escapeHTML(errorMessage(error))}</div>`;
+    $("#accountActions").hidden = true;
+  }
+}
+
+async function signOut() {
+  try { await api("/auth/logout", { method: "POST" }); } catch (_) { /* proceed to /login regardless */ }
+  window.location.href = "/login";
+}
+
 async function loadMemories() {
   try {
     const memories = await api("/memory");
@@ -847,6 +865,7 @@ function bindEvents() {
   $("#refreshDocuments").addEventListener("click", loadDocuments); $("#closeSource").addEventListener("click", closeSource);
   $("#deleteAllConversations").addEventListener("click", deleteAllConversations);
   $("#clearAllMemories").addEventListener("click", clearAllMemories);
+  $("#signOutButton").addEventListener("click", signOut);
   $("#enterToSend").checked = state.preferences.enterToSend; $("#autoScroll").checked = state.preferences.autoScroll; $("#useMemory").checked = state.preferences.useMemory;
   [["enterToSend", "enterToSend"], ["autoScroll", "autoScroll"], ["useMemory", "useMemory"]].forEach(([id, key]) => $("#" + id).addEventListener("change", event => { state.preferences[key] = event.target.checked; localStorage.setItem(`apex.${key}`, String(event.target.checked)); }));
   let searchTimer; $("#conversationSearch").addEventListener("input", event => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadConversations(event.target.value), 180); });
