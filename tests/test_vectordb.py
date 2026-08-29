@@ -149,6 +149,30 @@ def test_medical_heuristic_flags_non_medical_content(ingestion):
     assert result.status == "indexed"
 
 
+def test_ingestion_enforces_the_configured_max_document_pages(settings, store, tmp_path):
+    """Phase 70: IngestionService actually reads settings.max_document_pages
+    (not just extract_document's own default) when ingesting a real upload."""
+    from pypdf import PdfWriter
+
+    from apex_ai.config.settings import with_overrides
+
+    large = tmp_path / "large.pdf"
+    writer = PdfWriter()
+    for _ in range(10):
+        writer.add_blank_page(width=200, height=200)
+    with open(large, "wb") as handle:
+        writer.write(handle)
+
+    strict = with_overrides(settings, max_document_pages=5)
+    ingestion = IngestionService(strict, store)
+
+    from apex_ai.core.errors import DocumentProcessingError
+
+    with pytest.raises(DocumentProcessingError) as excinfo:
+        ingestion.ingest_path(large, USER)
+    assert "exceeds the 5-page limit" in str(excinfo.value)
+
+
 def test_count_failure_is_wrapped_as_actionable_database_error():
     class BrokenCollection:
         @staticmethod

@@ -247,6 +247,7 @@ def create_api(
             "chunks": result.chunks,
             "message": result.message,
             "warnings": result.warnings,
+            "previous_version_id": result.previous_version_id,
         }
 
     @app.delete("/documents/{document_id}", response_model=RemovedOut)

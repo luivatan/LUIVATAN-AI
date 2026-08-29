@@ -79,7 +79,9 @@ def _drop_repeated_lines(pages: list[str]) -> list[str]:
     return cleaned
 
 
-def _extract_pdf(path, document_id: str, name: str) -> Document:
+def _extract_pdf(
+    path, document_id: str, name: str, max_pages: int | None = None
+) -> Document:
     try:
         from pypdf import PdfReader
     except ModuleNotFoundError as error:  # pragma: no cover
@@ -91,6 +93,28 @@ def _extract_pdf(path, document_id: str, name: str) -> Document:
 
     try:
         reader = PdfReader(str(path))
+        page_count = len(reader.pages)
+    except Exception as error:
+        raise DocumentProcessingError(
+            what=f"The PDF `{name}` could not be opened or parsed.",
+            why=f"pypdf reported: {error}",
+            fix="Verify the file is a valid PDF. If it is corrupted, re-export or re-download it.",
+        ) from error
+
+    # Checked before extracting any page text (Phase 70): a pathological
+    # page count is a memory/latency risk independent of file size - a PDF
+    # can be well within the upload size limit and still have an enormous
+    # number of pages.
+    if max_pages is not None and page_count > max_pages:
+        raise DocumentProcessingError(
+            what=f"`{name}` has {page_count} pages, which exceeds the {max_pages}-page limit.",
+            why="Extracting and indexing an extremely large document in one request risks "
+                "exhausting memory and taking a very long time.",
+            fix="Split the document into smaller files and upload them separately, or raise "
+                "APEX_MAX_DOCUMENT_PAGES in .env if this machine can handle larger documents.",
+        )
+
+    try:
         raw_pages = [(page.extract_text() or "") for page in reader.pages]
     except Exception as error:
         raise DocumentProcessingError(
@@ -208,10 +232,13 @@ def _extract_json(path, document_id: str, name: str) -> Document:
     )
 
 
-def extract_document(path) -> Document:
+def extract_document(path, max_pages: int | None = None) -> Document:
     """Extract a :class:`Document` from any supported file.
 
-    Input: path to an existing file.
+    Input: path to an existing file. ``max_pages`` (Phase 70) rejects a PDF
+    with an excessive page count before any text is extracted from it - a
+    file well within the upload size limit can still have a pathological
+    page count.
     Output: Document with pages, page numbers preserved.
     Raises: DocumentProcessingError with a user-friendly explanation.
     """
@@ -230,7 +257,7 @@ def extract_document(path) -> Document:
     document_id = sha256_file(path)
 
     if suffix == ".pdf":
-        return _extract_pdf(path, document_id, name)
+        return _extract_pdf(path, document_id, name, max_pages=max_pages)
     if suffix in {".txt"}:
         return _extract_text_like(path, document_id, name, "txt")
     if suffix in {".md", ".markdown"}:

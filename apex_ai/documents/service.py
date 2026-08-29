@@ -63,6 +63,12 @@ class IngestResult:
     chunks: int = 0
     warnings: list[str] = field(default_factory=list)
     message: str = ""
+    # Phase 68: another indexed document with the same name (and different
+    # content - this is never the duplicate-content case) already existed
+    # when this one was indexed. Never acted on automatically - surfaced so
+    # the caller can offer to remove the stale prior version via the
+    # existing delete endpoint.
+    previous_version_id: str | None = None
 
 
 @dataclass
@@ -219,7 +225,7 @@ class IngestionService:
         restrict_to_owner(destination)
 
         with timed(log, "document ingestion", level=logging.INFO):
-            document = extract_document(destination)
+            document = extract_document(destination, max_pages=self.settings.max_document_pages)
             chunks = self.chunker.build_chunks(document)
             if not chunks:
                 return IngestResult(
@@ -267,6 +273,12 @@ class IngestionService:
         message += f"({document.page_count} page(s))."
         if warnings:
             message += "\nWarning: " + warnings[0]
+        previous_version = self.find_by_name(user_id, safe_name, exclude_document_id=document_id)
+        if previous_version is not None:
+            message += (
+                f"\nA document also named '{safe_name}' is already indexed "
+                "(likely an older version) - remove it if this replaces it."
+            )
         return IngestResult(
             status="indexed",
             document_name=safe_name,
@@ -274,6 +286,7 @@ class IngestionService:
             chunks=len(chunks),
             warnings=warnings,
             message=message,
+            previous_version_id=previous_version.document_id if previous_version else None,
         )
 
     # -- management ---------------------------------------------------------------
@@ -318,6 +331,23 @@ class IngestionService:
         """Document IDs to restrict retrieval to for a collection-scoped
         conversation (Phase 67)."""
         return [info.document_id for info in self.list_documents(user_id, collection_id)]
+
+    def find_by_name(
+        self, user_id: str, name: str, exclude_document_id: str = ""
+    ) -> DocumentInfo | None:
+        """The most recently indexed *other* document owned by ``user_id``
+        with this exact name, if any (Phase 68: a same-named, different-
+        content upload is very likely a new version of the same logical
+        document). Never acts on this by itself - see ``ingest_path``'s
+        ``previous_version_id``."""
+        matches = [
+            info
+            for (document_id, owner), info in self._registry.items()
+            if owner == user_id and info.name == name and document_id != exclude_document_id
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda info: info.created_at)
 
     def move_to_collection(
         self, document_id: str, user_id: str, collection_id: str

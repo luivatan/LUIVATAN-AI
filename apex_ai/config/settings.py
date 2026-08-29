@@ -108,6 +108,10 @@ class Settings:
     chunk_overlap: int = 150
     min_chunk_size: int = 200
     max_chunk_size: int = 1600
+    # Phase 70: a PDF can be well within max_upload_mb and still have a
+    # pathological page count (many near-empty pages) that would exhaust
+    # memory/time extracting and chunking it in one request.
+    max_document_pages: int = 2000
 
     # --- retrieval ------------------------------------------------------
     top_k: int = 12  # fused candidate pool (~10-20 per spec)
@@ -312,6 +316,9 @@ def load_settings() -> Settings:
         chunk_overlap=_int(_env("APEX_CHUNK_OVERLAP", default="150"), 150),
         min_chunk_size=_int(_env("APEX_MIN_CHUNK_SIZE", default="200"), 200),
         max_chunk_size=_int(_env("APEX_MAX_CHUNK_SIZE", default="1600"), 1600),
+        max_document_pages=max(
+            1, _int(_env("APEX_MAX_DOCUMENT_PAGES", default="2000"), 2000)
+        ),
         top_k=max(1, _int(_env("APEX_TOP_K", default="12"), 12)),
         semantic_candidate_k=max(
             1, _int(_env("APEX_SEMANTIC_CANDIDATES", default="16"), 16)

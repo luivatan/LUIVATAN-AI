@@ -288,6 +288,7 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_CONVERSATION_SUMMARY` | `0` | summarize turns that fall out of the live short-term window (Phase 50; extra LLM call) |
 | `APEX_RAG_DEBUG` | `0` | add developer-only trace route when explicitly enabled |
 | `APEX_CHUNK_SIZE` / `_OVERLAP` / `_MIN` / `_MAX` | 1000/150/200/1600 | chunking |
+| `APEX_MAX_DOCUMENT_PAGES` | `2000` | reject a PDF with more pages than this before extracting any text (Phase 70) |
 | `APEX_DATABASE_PATH` | `data/chroma` | vector store location |
 | `APEX_CONVERSATION_DB_PATH` | `data/conversations.db` | persistent conversation/history database |
 | `APEX_LONG_TERM_MEMORY_DB_PATH` | `data/long_term_memory.db` | separate explicit preference/context store; see `APEX_MEMORY_PROMPT_USE` |

@@ -749,8 +749,23 @@ async function uploadOne(item) {
   if (targetCollection) form.append("collection_id", targetCollection);
   try {
     const result = await api("/documents/upload", { method: "POST", body: form });
-    item.status = "done"; item.result = result; renderAttachmentTray(); toast(result.message, "success"); return true;
+    item.status = "done"; item.result = result; renderAttachmentTray(); toast(result.message, "success");
+    if (result.previous_version_id) await offerToRemovePreviousVersion(result);
+    return true;
   } catch (error) { item.status = "error"; item.error = errorMessage(error); renderAttachmentTray(); toast(`${item.file.name}: ${errorMessage(error)}`, "error"); return false; }
+}
+
+async function offerToRemovePreviousVersion(result) {
+  // Phase 68: never automatic - the older document stays fully indexed and
+  // citable until the user explicitly confirms it should go.
+  const accepted = await confirmAction(
+    "Remove the older version?",
+    `A document also named "${result.document_name}" was already indexed. Remove the older copy so only this new one is retrieved and cited?`,
+    "Remove older copy",
+  );
+  if (!accepted) return;
+  try { await api(`/documents/${result.previous_version_id}`, { method: "DELETE" }); toast("Older version removed.", "success"); await loadDocuments(); await loadConfig(); }
+  catch (error) { toast(errorMessage(error), "error"); }
 }
 
 async function uploadPendingFiles() {

@@ -123,6 +123,7 @@ class IngestOut(BaseModel):
     chunks: int
     message: str
     warnings: list[str]
+    previous_version_id: str | None = None
 
 
 class UploadOut(IngestOut):

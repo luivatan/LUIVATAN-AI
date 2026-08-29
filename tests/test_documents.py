@@ -70,6 +70,51 @@ def test_unsupported_extension_rejected(tmp_path):
         extract_document(file)
 
 
+def _write_blank_pdf(path, page_count: int) -> None:
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    for _ in range(page_count):
+        writer.add_blank_page(width=200, height=200)
+    with open(path, "wb") as handle:
+        writer.write(handle)
+
+
+def test_pdf_exceeding_max_pages_is_rejected_before_extracting_text(tmp_path):
+    large = tmp_path / "large.pdf"
+    _write_blank_pdf(large, page_count=10)
+
+    with pytest.raises(DocumentProcessingError) as excinfo:
+        extract_document(large, max_pages=5)
+    message = str(excinfo.value)
+    assert "10 pages" in message
+    assert "exceeds" in message
+    assert "APEX_MAX_DOCUMENT_PAGES" in message
+
+
+def test_pdf_within_max_pages_is_unaffected(tmp_path):
+    small = tmp_path / "small.pdf"
+    _write_blank_pdf(small, page_count=3)
+
+    # A page-count limit must never reject a document that fits under it;
+    # whether it then extracts real text is a separate concern (blank pages
+    # legitimately raise the "no readable text" error, not a page-limit one).
+    with pytest.raises(DocumentProcessingError) as excinfo:
+        extract_document(small, max_pages=5)
+    assert "no readable text" in str(excinfo.value).lower()
+
+
+def test_max_pages_none_means_no_limit(tmp_path):
+    large = tmp_path / "large.pdf"
+    _write_blank_pdf(large, page_count=10)
+
+    # Blank pages still raise "no readable text" - proving extraction was
+    # actually attempted (not rejected for page count) with no limit set.
+    with pytest.raises(DocumentProcessingError) as excinfo:
+        extract_document(large, max_pages=None)
+    assert "no readable text" in str(excinfo.value).lower()
+
+
 # ------------------------- chunking -------------------------
 
 

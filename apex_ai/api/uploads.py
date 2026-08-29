@@ -91,6 +91,7 @@ def create_upload_router(services) -> APIRouter:
                 "message": result.message,
                 "warnings": result.warnings,
                 "size_bytes": size,
+                "previous_version_id": result.previous_version_id,
             }
         finally:
             try:
@@ -114,6 +115,7 @@ def create_upload_router(services) -> APIRouter:
             "chunks": result.chunks,
             "message": result.message,
             "warnings": result.warnings,
+            "previous_version_id": result.previous_version_id,
         }
 
     return router

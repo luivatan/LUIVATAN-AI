@@ -175,3 +175,62 @@ def test_engine_ask_respects_document_ids_scoping(engine, ingestion):
     supported = engine.ask("How should burns be cooled?", document_ids=[burn_care.document_id])
     assert not supported.insufficient_evidence
     assert supported.citations
+
+
+# ---------------- Phase 68: document versioning (non-destructive) ----------------
+
+
+def test_uploading_a_same_named_document_flags_the_previous_version_non_destructively(
+    ingestion, tmp_path
+):
+    # Different source directories so both files can share the same basename
+    # ("policy.md") - it's that basename ingest_path uses as the stored
+    # document name, which is what "same name" detection keys on.
+    first_dir = tmp_path / "v1"; first_dir.mkdir()
+    first_upload = first_dir / "policy.md"
+    first_upload.write_text("# Policy\n\nOriginal wording that is long enough to index.")
+    first = ingestion.ingest_path(first_upload, USER)
+    assert first.previous_version_id is None
+
+    second_dir = tmp_path / "v2"; second_dir.mkdir()
+    second_upload = second_dir / "policy.md"
+    second_upload.write_text("# Policy\n\nUpdated wording that is long enough to index too.")
+    second = ingestion.ingest_path(second_upload, USER)
+
+    assert second.status == "indexed"
+    assert second.document_id != first.document_id
+    assert second.previous_version_id == first.document_id
+    assert "already indexed" in second.message
+
+    # Never destructive by itself: the "old" version is still fully present.
+    both = {d.document_id for d in ingestion.list_documents(USER)}
+    assert both == {first.document_id, second.document_id}
+
+
+def test_uploading_a_differently_named_document_never_flags_a_previous_version(
+    ingestion, tmp_path
+):
+    a = tmp_path / "alpha.md"
+    a.write_text("# Alpha\n\nSome content that is long enough to index.")
+    b = tmp_path / "beta.md"
+    b.write_text("# Beta\n\nDifferent content that is long enough to index.")
+
+    ingestion.ingest_path(a, USER)
+    result = ingestion.ingest_path(b, USER)
+
+    assert result.previous_version_id is None
+
+
+def test_reindexing_does_not_flag_itself_as_a_previous_version(ingestion):
+    result = ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
+    reindexed = ingestion.reindex(result.document_id, USER)
+    assert reindexed.previous_version_id is None
+
+
+def test_find_by_name_excludes_the_given_document_id(ingestion, tmp_path):
+    source = tmp_path / "notes.md"
+    source.write_text("# Notes\n\nSome content that is long enough to index.")
+    created = ingestion.ingest_path(source, USER)
+
+    assert ingestion.find_by_name(USER, "notes.md") == ingestion.list_documents(USER)[0]
+    assert ingestion.find_by_name(USER, "notes.md", exclude_document_id=created.document_id) is None

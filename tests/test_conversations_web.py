@@ -213,6 +213,9 @@ def test_static_assets_include_responsive_themes_and_code_blocks(web_client):
     assert "function renderCollectionFilterRow" in javascript.text
     assert "conversationCollection" in javascript.text
     assert "/collections" in javascript.text
+    # Phase 68: non-destructive same-name new-version detection.
+    assert "previous_version_id" in javascript.text
+    assert "function offerToRemovePreviousVersion" in javascript.text
 
 
 def test_streaming_chat_uses_real_engine_and_persists_verified_citations(web_client):
@@ -631,6 +634,31 @@ def test_browser_upload_connects_to_existing_ingestion_pipeline(web_client):
     assert {document["name"] for document in documents} >= {
         "sample_first_aid.pdf", "burn_care.md"
     }
+
+
+def test_uploading_a_same_named_document_via_the_api_flags_but_keeps_the_old_one(web_client):
+    """Phase 68 end-to-end: the response flags a likely-stale prior version,
+    but nothing is deleted until the user explicitly removes it."""
+    first = web_client.post(
+        "/documents/upload",
+        files={"file": ("report.md", b"# Report\n\nOriginal wording, long enough to index.", "text/markdown")},
+    ).json()
+    assert first["previous_version_id"] is None
+
+    second = web_client.post(
+        "/documents/upload",
+        files={"file": ("report.md", b"# Report\n\nUpdated wording, long enough to index.", "text/markdown")},
+    ).json()
+    assert second["previous_version_id"] == first["document_id"]
+
+    ids = {d["document_id"] for d in web_client.get("/documents").json()}
+    assert {first["document_id"], second["document_id"]} <= ids  # both still present
+
+    removed = web_client.delete(f"/documents/{second['previous_version_id']}")
+    assert removed.status_code == 200
+    remaining_ids = {d["document_id"] for d in web_client.get("/documents").json()}
+    assert first["document_id"] not in remaining_ids
+    assert second["document_id"] in remaining_ids
 
 
 def test_browser_upload_rejects_unsupported_type(web_client):
