@@ -4,3 +4,8 @@ __pycache__/
 database/
 chroma/
 *.pyc
+.env
+.env.*
+!.env.example
+.pytest_cache/
+models/

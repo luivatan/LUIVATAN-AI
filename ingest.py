@@ -1,9 +1,19 @@
-import hashlib
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+from rag_utils import (
+    MEDICAL_WARNING,
+    chunk_text,
+    citation_label,
+    file_sha256,
+    is_likely_medical_document,
+    safe_filename,
+)
 
 try:
     import chromadb
@@ -17,6 +27,14 @@ except ModuleNotFoundError as error:
         "pip install -r requirements.txt"
     )
     raise SystemExit(1) from error
+
+load_dotenv()
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("luivatan_ai")
 
 DATABASE_PATH = "./database"
 COLLECTION_NAME = "medical_docs"
@@ -39,44 +57,10 @@ current_llama_model_path = LLAMA_MODEL_PATH
 generate_answer = None
 loaded_llm_key = None
 last_source_texts = {}
-MEDICAL_WARNING = (
-    "This AI is designed for medical documents. "
-    "Results may be less reliable for non-medical content."
-)
-MEDICAL_KEYWORDS = {
-    "anatomy",
-    "antibiotic",
-    "blood",
-    "cardiac",
-    "care",
-    "cell",
-    "clinical",
-    "diagnosis",
-    "disease",
-    "doctor",
-    "dose",
-    "drug",
-    "health",
-    "hospital",
-    "infection",
-    "injury",
-    "lab",
-    "medical",
-    "medicine",
-    "nurse",
-    "patient",
-    "pharmacology",
-    "physician",
-    "prescription",
-    "symptom",
-    "therapy",
-    "treatment",
-    "vaccine",
-}
 
 
 def log_error(context, error):
-    print(f"{context}: {error}")
+    logger.error("%s: %s", context, error)
 
 # =========================
 # LOAD EMBEDDING MODEL
@@ -365,22 +349,39 @@ def document_library():
 
 
 # =========================
-# PDF INDEXING
+# HEALTH CHECK
 # =========================
 
-def safe_filename(filename):
-    return Path(filename).name.replace("/", "_").replace("\\", "_")
+def run_health_check():
+    lines = ["Health Check"]
+
+    lines.append("- OK Embedding model loaded (all-MiniLM-L6-v2)")
+
+    try:
+        chunk_count = collection.count()
+        lines.append(f"- OK Vector database reachable ({chunk_count} indexed chunk(s))")
+    except Exception as error:
+        log_error("Health check: vector database failed", error)
+        lines.append(f"- FAIL Vector database unreachable: {error}")
+
+    model_status = get_model_status()
+
+    if model_status.startswith("Ready"):
+        lines.append(f"- OK LLM provider `{LLM_PROVIDER}` configured")
+    else:
+        lines.append(f"- WARN LLM provider `{LLM_PROVIDER}`: {model_status}")
+
+    if MEMORY_PATH.exists():
+        lines.append(f"- OK Conversation memory file readable ({len(conversation_memory)} entries)")
+    else:
+        lines.append("- OK Conversation memory file not created yet (will be created on first answer)")
+
+    return "\n".join(lines)
 
 
-def file_sha256(path):
-    digest = hashlib.sha256()
-
-    with open(path, "rb") as source_file:
-        for block in iter(lambda: source_file.read(1024 * 1024), b""):
-            digest.update(block)
-
-    return digest.hexdigest()
-
+# =========================
+# PDF INDEXING
+# =========================
 
 def extract_pdf_pages(pdf_path):
     try:
@@ -409,37 +410,6 @@ def extract_pdf_pages(pdf_path):
     return pages
 
 
-def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-    cleaned = " ".join(text.split())
-
-    if not cleaned:
-        return []
-
-    chunks = []
-    start = 0
-
-    while start < len(cleaned):
-        end = start + chunk_size
-        chunk = cleaned[start:end].strip()
-
-        if chunk:
-            chunks.append(chunk)
-
-        if end >= len(cleaned):
-            break
-
-        start = max(end - overlap, start + 1)
-
-    return chunks
-
-
-def is_likely_medical_document(pages):
-    text = " ".join(page_text.lower() for _, page_text in pages)
-    matches = sum(1 for keyword in MEDICAL_KEYWORDS if keyword in text)
-
-    return matches >= 3
-
-
 def index_uploaded_pdf(pdf_path):
     if not pdf_path:
         return "Upload a PDF first.", document_library()
@@ -462,7 +432,9 @@ def index_uploaded_pdf(pdf_path):
         metadatas = []
 
         for page_number, page_text in pages:
-            for chunk_index, chunk in enumerate(chunk_text(page_text), start=1):
+            for chunk_index, chunk in enumerate(
+                chunk_text(page_text, CHUNK_SIZE, CHUNK_OVERLAP), start=1
+            ):
                 doc_id = f"{source_hash}:p{page_number}:c{chunk_index}"
 
                 ids.append(doc_id)
@@ -503,20 +475,6 @@ def index_uploaded_pdf(pdf_path):
 # RETRIEVAL AND CHAT
 # =========================
 
-def citation_label(metadata):
-    source = metadata.get("source", "unknown source")
-    page = metadata.get("page")
-    chunk = metadata.get("chunk")
-
-    if page is not None:
-        if chunk is not None:
-            return f"{source} Page {page} Chunk {chunk}"
-
-        return f"{source} Page {page}"
-
-    return source
-
-
 def format_retrieved_context(results):
     global last_source_texts
 
@@ -529,9 +487,7 @@ def format_retrieved_context(results):
     citations = []
     last_source_texts = {}
 
-    print("\n====================")
-    print("RETRIEVED CHUNKS")
-    print("====================\n")
+    logger.debug("Retrieved %d chunk(s) for query", len(documents))
 
     for index, document in enumerate(documents, start=1):
         metadata = metadatas[index - 1] if index - 1 < len(metadatas) else {}
@@ -540,9 +496,13 @@ def format_retrieved_context(results):
         citation = citation_label(metadata)
         source_choice = f"[{index}] {citation}"
 
-        print(f"{source_choice} | ID: {doc_id} | Distance: {distance}")
-        print(document[:1000])
-        print()
+        logger.debug(
+            "%s | ID: %s | Distance: %s | %s",
+            source_choice,
+            doc_id,
+            distance,
+            document[:1000],
+        )
 
         context_blocks.append(
             f"[{index}] {citation}\n{document}"
@@ -739,6 +699,21 @@ with gr.Blocks(title="Local Medical AI") as interface:
         inputs=source_selector,
         outputs=source_viewer,
     )
+
+    with gr.Accordion("Health Check", open=False):
+        health_output = gr.Textbox(
+            label="Status",
+            lines=6,
+            value=run_health_check(),
+            interactive=False,
+        )
+        health_button = gr.Button("Re-check")
+
+        health_button.click(
+            fn=run_health_check,
+            inputs=None,
+            outputs=health_output,
+        )
 
 
 def launch():
