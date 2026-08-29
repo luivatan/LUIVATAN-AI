@@ -18,6 +18,7 @@ from apex_ai.core.errors import ApexError, ProviderError
 from apex_ai.core.logging import get_logger, log_event
 from apex_ai.core.types import AnswerResult, Citation, RetrievedChunk
 from apex_ai.memory.context import ConversationContext, build_conversation_context
+from apex_ai.memory.relevance import format_memory_text, select_relevant_memories
 from apex_ai.rag.context_builder import BuiltContext, build_context
 from apex_ai.rag.prompts import INSUFFICIENT_EVIDENCE_ANSWER, build_messages
 from apex_ai.rag.query_processing import QueryProcessor, QueryTrace
@@ -83,6 +84,7 @@ class PreparedTurn:
     context: BuiltContext | None = None
     history: list[dict] = field(default_factory=list)
     conversation_context: ConversationContext | None = None
+    memory_text: str = ""
     confidence: float = 0.0
     lexical_support: float = 0.0
     exact_anchor_support: float = 0.0
@@ -108,6 +110,7 @@ class PreparedTurn:
                 if self.conversation_context
                 else None
             ),
+            "memory_text": self.memory_text or None,
             "reranked_evidence": [
                 {
                     "rank": rank,
@@ -150,6 +153,7 @@ class RagEngine:
         llm_provider,
         query_processor: QueryProcessor | None = None,
         medical_mode: bool = True,
+        long_term_memory=None,
     ) -> None:
         self.settings = settings
         self.store = store
@@ -159,6 +163,11 @@ class RagEngine:
         self.llm = llm_provider
         self.query_processor = query_processor or QueryProcessor(enabled=False)
         self.medical_mode = medical_mode
+        # Phase 47: optional and separate from ``memory`` above. ``memory`` is
+        # short-term conversation history; this is explicitly user-confirmed
+        # long-term preferences/context (Phase 42/45/46). Both stay out of
+        # document evidence and citations either way.
+        self.long_term_memory = long_term_memory
 
     # -- preparation (retrieval + context; no generation) -----------------
 
@@ -275,6 +284,27 @@ class RagEngine:
         )
         turn.timings["conversation_context"] = round(
             (time.perf_counter() - history_stage) * 1000, 3
+        )
+
+        memory_stage = time.perf_counter()
+        if use_memory and self.long_term_memory and getattr(
+            self.settings, "memory_prompt_use", True
+        ):
+            try:
+                confirmed = self.long_term_memory.list(limit=50)
+                relevant = select_relevant_memories(question, confirmed)
+                turn.memory_text = format_memory_text(relevant)
+            except Exception as error:  # noqa: BLE001 - optional personalization boundary
+                # Long-term memory is explicitly optional (Phase 42): a failure here
+                # must degrade to no personalization, never break the chat turn.
+                turn.errors.append(f"memory: {type(error).__name__}: {error}")
+                log.warning(
+                    "Relevant-memory selection failed; continuing without it "
+                    "(error_type=%s)",
+                    type(error).__name__,
+                )
+        turn.timings["memory_retrieval"] = round(
+            (time.perf_counter() - memory_stage) * 1000, 3
         )
 
         stage = time.perf_counter()
@@ -519,6 +549,7 @@ class RagEngine:
                 turn.history,
                 medical=self.medical_mode,
                 history_text=turn.conversation_context.text,
+                memory_text=turn.memory_text,
             )
             generation_started = time.perf_counter()
             try:
@@ -587,6 +618,7 @@ class RagEngine:
             turn.history,
             medical=self.medical_mode,
             history_text=turn.conversation_context.text,
+            memory_text=turn.memory_text,
         )
         generation_started = time.perf_counter()
         try:
@@ -630,6 +662,7 @@ class RagEngine:
             turn.history,
             medical=self.medical_mode,
             history_text=turn.conversation_context.text,
+            memory_text=turn.memory_text,
         )
         generation_started = time.perf_counter()
         parts: list[str] = []

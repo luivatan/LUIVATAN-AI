@@ -155,7 +155,12 @@ def create_api(
                 if services.long_term_memory is not None
                 else "unavailable",
                 "optional": True,
-                "prompt_use": False,
+                # Phase 47: reflects the real configured/wired state instead of
+                # the hardcoded False this field held before that phase existed.
+                "prompt_use": bool(
+                    services.long_term_memory is not None
+                    and getattr(services.settings, "memory_prompt_use", True)
+                ),
             },
         }
         if overall_ready:

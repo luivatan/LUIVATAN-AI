@@ -211,6 +211,7 @@ def build_services(
             llm_provider=_LazyLLM(services),
             query_processor=services.query_processor,
             medical_mode=settings.medical_mode,
+            long_term_memory=services.long_term_memory,
         )
         log_event(
             log,

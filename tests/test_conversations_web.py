@@ -191,9 +191,12 @@ def test_streaming_chat_uses_real_engine_and_persists_verified_citations(web_cli
     assert saved["messages"][1]["citations"] == final["citations"]
 
 
-def test_memory_candidate_requires_approval_and_is_not_prompted(
+def test_memory_candidate_requires_approval_then_becomes_relevant_context(
     web_client, web_services
 ):
+    """Phase 45: nothing reaches the prompt before explicit approval. Phase 47:
+    after approval, a confirmed preference legitimately reaches the prompt as
+    clearly separated, never-cited user context — never as document evidence."""
     preference = "I prefer concise answers."
     stream = events(
         web_client.post(
@@ -223,11 +226,17 @@ def test_memory_candidate_requires_approval_and_is_not_prompted(
         "/chat/stream",
         json={
             "question": "What temperature is a fever in adults?",
-            "request_id": "memory-not-in-prompt",
+            "request_id": "memory-now-in-prompt",
         },
     )
     assert follow_up.status_code == 200
-    assert preference not in repr(FakeLLM.last_messages)
+    prompt = repr(FakeLLM.last_messages)
+    assert preference in prompt
+    assert "User context" in prompt
+
+    final = next(item for item in events(follow_up) if item["type"] == "final")
+    assert all(preference not in citation["text"] for citation in final["citations"])
+    assert all(preference not in citation.get("source", "") for citation in final["citations"])
 
 
 def test_memory_candidate_can_be_rejected_without_storing_content(

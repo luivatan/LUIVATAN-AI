@@ -74,7 +74,11 @@ def test_health_reports_memory_availability_without_exposing_contents(
 
     response = api_client.get("/health")
     assert response.status_code == 200
-    assert response.json()["long_term_memory"]["status"] == "ready"
+    payload = response.json()
+    assert payload["long_term_memory"]["status"] == "ready"
+    # Phase 47: reflects the real setting (default on) once a store exists,
+    # not the hardcoded False this field held before that phase.
+    assert payload["long_term_memory"]["prompt_use"] is True
     assert canary not in response.text
 
 
@@ -146,9 +150,11 @@ def test_query_endpoint_returns_citations(api_client):
     assert "context_chunk_ids" not in payload
 
 
-def test_phase42_does_not_extract_or_prompt_with_long_term_memory(
+def test_phase42_query_endpoint_does_not_trigger_memory_extraction(
     api_client, wired_services
 ):
+    """The compatibility /query route must not silently create new memory
+    candidates or confirmed records from an ordinary factual question."""
     from apex_ai.memory.long_term import LongTermMemoryStore
 
     private_memory = "PRIVATE-LONG-TERM-MEMORY-CANARY"
@@ -163,7 +169,92 @@ def test_phase42_does_not_extract_or_prompt_with_long_term_memory(
 
     assert response.status_code == 200
     assert wired_services.long_term_memory.count() == 1
-    assert private_memory not in repr(FakeLLM.last_messages)
+
+
+def test_phase47_preference_always_reaches_prompt_but_never_becomes_a_citation(
+    wired_services,
+):
+    """A confirmed *preference* applies to every question (Phase 47 design:
+    preferences describe HOW to answer, not a topic), so it's expected in the
+    prompt here — but it must never be attached to citations, which stay
+    document-only regardless of what memory contains."""
+    from apex_ai.memory.long_term import LongTermMemoryStore
+    from apex_ai.rag.engine import RagEngine
+
+    private_preference = "PRIVATE-PREFERENCE-CANARY: prefers concise answers"
+    long_term_memory = LongTermMemoryStore(wired_services.settings.long_term_memory_db_path)
+    long_term_memory.create(private_preference, kind="preference")
+
+    engine = RagEngine(
+        settings=wired_services.settings,
+        store=wired_services.store,
+        retriever=wired_services.retriever,
+        reranker=wired_services.reranker,
+        memory=wired_services.memory,
+        llm_provider=FakeLLM(),
+        query_processor=wired_services.query_processor,
+        long_term_memory=long_term_memory,
+    )
+
+    result = engine.ask("What temperature is a fever in adults?")
+
+    assert private_preference in repr(FakeLLM.last_messages)
+    assert "User context" in repr(FakeLLM.last_messages)
+    assert result.citations
+    assert all(private_preference not in citation.text for citation in result.citations)
+
+
+def test_phase47_unrelated_ongoing_context_is_filtered_out_by_relevance(wired_services):
+    """Unlike preferences, ongoing_context is topic-scoped: a stored note about
+    an unrelated task must not leak into a question that shares no keywords
+    with it (this is what relevance filtering exists to prevent)."""
+    from apex_ai.memory.long_term import LongTermMemoryStore
+    from apex_ai.rag.engine import RagEngine
+
+    unrelated_context = "PRIVATE-CONTEXT-CANARY: migrating a payroll spreadsheet to a new vendor"
+    long_term_memory = LongTermMemoryStore(wired_services.settings.long_term_memory_db_path)
+    long_term_memory.create(unrelated_context, kind="ongoing_context")
+
+    engine = RagEngine(
+        settings=wired_services.settings,
+        store=wired_services.store,
+        retriever=wired_services.retriever,
+        reranker=wired_services.reranker,
+        memory=wired_services.memory,
+        llm_provider=FakeLLM(),
+        query_processor=wired_services.query_processor,
+        long_term_memory=long_term_memory,
+    )
+
+    engine.ask("What temperature is a fever in adults?")
+
+    assert unrelated_context not in repr(FakeLLM.last_messages)
+
+
+def test_phase47_memory_prompt_use_setting_disables_injection(wired_services, settings):
+    from apex_ai.config.settings import with_overrides
+    from apex_ai.memory.long_term import LongTermMemoryStore
+    from apex_ai.rag.engine import RagEngine
+
+    preference = "PRIVATE-DISABLED-CANARY: prefers concise answers"
+    long_term_memory = LongTermMemoryStore(wired_services.settings.long_term_memory_db_path)
+    long_term_memory.create(preference, kind="preference")
+    disabled_settings = with_overrides(settings, memory_prompt_use=False)
+
+    engine = RagEngine(
+        settings=disabled_settings,
+        store=wired_services.store,
+        retriever=wired_services.retriever,
+        reranker=wired_services.reranker,
+        memory=wired_services.memory,
+        llm_provider=FakeLLM(),
+        query_processor=wired_services.query_processor,
+        long_term_memory=long_term_memory,
+    )
+
+    engine.ask("What temperature is a fever in adults?")
+
+    assert preference not in repr(FakeLLM.last_messages)
 
 
 def test_phase43_candidate_like_chat_is_not_automatically_persisted(

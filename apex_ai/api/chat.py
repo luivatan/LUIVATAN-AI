@@ -124,6 +124,7 @@ def _engine_for_conversation(services, memory) -> RagEngine:
         llm_provider=base.llm,
         query_processor=services.query_processor,
         medical_mode=base.medical_mode,
+        long_term_memory=services.long_term_memory,
     )
 
 

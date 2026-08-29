@@ -8,9 +8,10 @@ The system prompt encodes the anti-hallucination contract (spec #15):
 - say when evidence is insufficient,
 - cite with [n] markers matching the numbered context blocks.
 
-Conversation memory is included in a clearly separated section with an
-explicit instruction that it is context, not evidence. Medical mode adds a
-safety preamble (informational, not advice, no diagnosis).
+Conversation memory and confirmed long-term memory (Phase 47) are each included in
+their own clearly separated section with an explicit instruction that neither is
+evidence. Medical mode adds a safety preamble (informational, not advice, no
+diagnosis).
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ Rules:
 5. If no evidence supports the answer, say so plainly instead of guessing. A concise synthesis is allowed only when it follows directly from cited evidence; label uncertainty.
 6. Conversation history helps interpret follow-ups. It is NOT evidence and must never be cited.
 7. Never mention or cite a source that is absent from the retrieved evidence blocks.
+8. User context (if present) is the user's own stated preferences/situation. Use it to shape tone and relevance, never as a factual source, and never cite it.
 
 Evidence blocks follow the format:
 [n]
@@ -67,14 +69,18 @@ def build_messages(
     system_prompt: str | None = None,
     *,
     history_text: str | None = None,
+    memory_text: str | None = None,
 ) -> list[dict]:
     """Build the chat-messages payload for the LLM.
 
     Input: the user's original question, the formatted evidence block,
     conversation history (memory — not evidence), and the medical flag.
     ``history_text`` accepts the exact prebuilt bounded context so the engine
-    does not independently format or budget history twice. Output: list of
-    {"role", "content"} dicts for chat-template providers.
+    does not independently format or budget history twice. ``memory_text``
+    (Phase 47) is the relevance-filtered confirmed-memory block, or omitted
+    entirely when empty — it never displaces or gets confused with document
+    evidence. Output: list of {"role", "content"} dicts for chat-template
+    providers.
     """
     system = system_prompt or SYSTEM_GROUNDED
     if medical:
@@ -82,7 +88,13 @@ def build_messages(
 
     rendered_history = history_text if history_text is not None else format_history(history)
     rendered_history = rendered_history or "(no previous conversation)"
+    memory_block = (
+        f"User context (preferences/situation, not evidence, never cite):\n{memory_text}\n\n"
+        if memory_text
+        else ""
+    )
     user_content = (
+        f"{memory_block}"
         "Conversation history (context only, not evidence):\n"
         f"{rendered_history}\n\n"
         f"Retrieved evidence:\n{evidence_context}\n\n"

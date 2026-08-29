@@ -302,7 +302,7 @@ async function decideMemoryCandidate(candidateId, decision) {
     await api(`/memory/candidates/${encodeURIComponent(candidateId)}/${decision}`, { method: "POST" });
     state.memoryCandidates = state.memoryCandidates.filter(item => item.id !== candidateId);
     renderMemoryCandidates();
-    toast(decision === "approve" ? "Saved to long-term memory; prompt use is not enabled yet." : "Memory suggestion dismissed.", "success");
+    toast(decision === "approve" ? "Saved to long-term memory. Relevant items may shape future answers." : "Memory suggestion dismissed.", "success");
   } catch (error) {
     toast(errorMessage(error), "error");
     await loadMemoryCandidates();

@@ -58,8 +58,13 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   only explicitly signaled preference/ongoing-context candidates while preserving exact
   terms. Safe candidates remain pending and expire; they are not confirmed memories.
 - **Explicit memory confirmation** — an accessible card lets the user choose **Remember**
-  or **Don't save**. Only approval atomically moves pending text into long-term memory;
-  confirmed memory is still not injected into prompts until relevance retrieval exists.
+  or **Don't save**. Only approval atomically moves pending text into long-term memory.
+- **Relevant memory retrieval** — confirmed preferences (how to answer) and
+  keyword-relevant ongoing context (what the user is currently doing) are selected per
+  question and added to the prompt as a clearly separated, never-cited "user context"
+  block — never document evidence, never a citation source.
+- **Memory management** — a Settings panel lists every confirmed memory with delete and
+  clear-all controls, backed directly by the same store (not the proposal workflow).
 - **Memory safety at the storage boundary** — candidates and every long-term-memory
   create/update are screened locally for labeled credentials, known token/key formats,
   likely opaque secrets, and unnecessary sensitive identifiers. Findings never echo the
@@ -159,7 +164,9 @@ source chips to inspect the exact evidence. Conversations are real persisted rec
 `data/conversations.db`; **New chat**, history search, rename, delete, regenerate, and
 stop all operate on that store. The independent memory foundation lives in
 `data/long_term_memory.db`; it contains short-lived safe proposals and explicitly approved
-records, but neither is read by chat generation yet.
+records. Confirmed records are relevance-filtered per question and included in the prompt
+as a clearly separated, never-cited "user context" block (`APEX_MEMORY_PROMPT_USE=1` by
+default); pending proposals are never read by chat generation.
 
 The same process exposes API documentation at **`/api/docs`**. You can also use:
 
@@ -223,11 +230,12 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_MEMORY_TURNS` / `APEX_HISTORY_TURNS` | `8` / `3` | recent pairs requested (and JSON-retained) versus pairs eligible for one prompt |
 | `APEX_HISTORY_CHAR_LIMIT` | `2400` | strict total short-term conversation-context budget |
 | `APEX_HISTORY_MESSAGE_CHAR_LIMIT` | `1000` | strict limit for each prior user/assistant message |
+| `APEX_MEMORY_PROMPT_USE` | `1` | inject relevance-filtered confirmed long-term memory into prompts (Phase 47) |
 | `APEX_RAG_DEBUG` | `0` | add developer-only trace route when explicitly enabled |
 | `APEX_CHUNK_SIZE` / `_OVERLAP` / `_MIN` / `_MAX` | 1000/150/200/1600 | chunking |
 | `APEX_DATABASE_PATH` | `data/chroma` | vector store location |
 | `APEX_CONVERSATION_DB_PATH` | `data/conversations.db` | persistent conversation/history database |
-| `APEX_LONG_TERM_MEMORY_DB_PATH` | `data/long_term_memory.db` | separate explicit preference/context store (not prompt-connected in Phase 42) |
+| `APEX_LONG_TERM_MEMORY_DB_PATH` | `data/long_term_memory.db` | separate explicit preference/context store; see `APEX_MEMORY_PROMPT_USE` |
 | `APEX_MAX_UPLOAD_MB` | `50` | server-enforced size limit for each browser upload |
 | `APEX_OFFLINE` | `0` | `1` = never download, fail with clear errors instead |
 
