@@ -96,6 +96,9 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   auto-provisioned local account); a real sign-in always takes precedence.
   Conversations, long-term memory, and uploaded documents (vector index, keyword
   index, and upload directory) are all fully isolated per account (Phase 54/55).
+  Uploaded files and the vector database get owner-only filesystem permissions
+  (Phase 57), and the API applies an in-memory per-client rate limit with a
+  stricter budget on `/auth/login`/`/auth/signup` (Phase 58).
 - **Compatibility interfaces** — the original JSON routes, terminal chat, and preserved
   Gradio interface remain available.
 
@@ -286,6 +289,9 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_SESSION_COOKIE_NAME` / `APEX_SESSION_TTL_DAYS` | `apex_session` / `30` | session cookie name and lifetime |
 | `APEX_AUTO_LOGIN_LOCAL` | `1` | `0` = require real sign-in for every request instead of the default-local-account fallback |
 | `APEX_MAX_UPLOAD_MB` | `50` | server-enforced size limit for each browser upload |
+| `APEX_RATE_LIMIT_ENABLED` / `APEX_RATE_LIMIT_PER_MINUTE` | `1` / `120` | in-memory per-client-IP request budget (Phase 58) |
+| `APEX_AUTH_RATE_LIMIT_PER_MINUTE` | `10` | stricter budget for `/auth/login` and `/auth/signup` |
+| `APEX_CORS_ALLOWED_ORIGINS` | *(empty)* | comma-separated allowed origins; empty = no CORS headers at all |
 | `APEX_OFFLINE` | `0` | `1` = never download, fail with clear errors instead |
 
 Legacy names from the previous project (`LLM_PROVIDER`, `LLAMA_MODEL_PATH`,

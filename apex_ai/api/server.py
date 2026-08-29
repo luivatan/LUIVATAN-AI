@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Response
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from apex_ai import APP_NAME, __version__
@@ -18,6 +19,7 @@ from apex_ai.api.auth import create_auth_router, make_require_user_dependency
 from apex_ai.api.chat import GenerationManager, create_chat_router
 from apex_ai.api.errors import install_error_handlers, service_not_ready_error
 from apex_ai.api.memory import create_memory_router
+from apex_ai.api.rate_limit import install_rate_limiting
 from apex_ai.api.schemas import (
     AppConfigOut,
     DeletedCountOut,
@@ -79,6 +81,19 @@ def create_api(
         redoc_url=None,
     )
     install_error_handlers(app)
+    install_rate_limiting(app, services.settings)
+    if services.settings.cors_allowed_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[
+                origin.strip()
+                for origin in services.settings.cors_allowed_origins.split(",")
+                if origin.strip()
+            ],
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "PATCH", "DELETE"],
+            allow_headers=["Content-Type"],
+        )
     app.state.apex_services = services
     app.state.conversations = conversations
     app.state.generations = GenerationManager()

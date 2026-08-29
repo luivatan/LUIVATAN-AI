@@ -93,6 +93,11 @@ def settings(tmp_path) -> Settings:
         min_similarity=0.05,
         reranker_mode="lexical",
         context_char_limit=4000,
+        # The whole suite can make far more than the production default's
+        # per-minute budget of requests against one shared TestClient within
+        # a single test run; rate limiting itself is tested explicitly
+        # (test_rate_limiting.py) against its own dedicated app instance.
+        rate_limit_enabled=False,
     )
 
 

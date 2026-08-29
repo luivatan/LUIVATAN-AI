@@ -153,6 +153,23 @@ class Settings:
     # (a shared/hosted deployment with multiple real accounts).
     auto_login_local: bool = True
 
+    # --- API security (Phase 58) --------------------------------------------
+    # In-memory sliding-window limits, keyed by client IP - offline-first, no
+    # external service. Resets on restart; the threat model is a client
+    # hammering the API within one process's uptime, not surviving restarts.
+    rate_limit_enabled: bool = True
+    rate_limit_requests_per_minute: int = 120  # general API traffic
+    # Stricter: /auth/login and /auth/signup are the classic brute-force /
+    # credential-stuffing target and deserve a much tighter budget than the
+    # rest of the API.
+    auth_rate_limit_requests_per_minute: int = 10
+    # Comma-separated allowed origins for cross-origin browser requests.
+    # Empty (default) means no CORSMiddleware is installed at all - the
+    # existing same-origin SPA needs none, and browsers already block
+    # cross-origin requests without an explicit allow. Only set this for a
+    # deployment that genuinely serves a separate frontend origin.
+    cors_allowed_origins: str = ""
+
     # --- server ------------------------------------------------------------
     # Loopback is the safe default; a wider bind plus real accounts (Phase 51+)
     # is a deliberate choice for a shared deployment, not the default posture.
@@ -352,6 +369,14 @@ def load_settings() -> Settings:
         session_cookie_name=_env("APEX_SESSION_COOKIE_NAME", default="apex_session"),
         session_ttl_days=max(1, _int(_env("APEX_SESSION_TTL_DAYS", default="30"), 30)),
         auto_login_local=_bool(_env("APEX_AUTO_LOGIN_LOCAL", default=""), True),
+        rate_limit_enabled=_bool(_env("APEX_RATE_LIMIT_ENABLED", default=""), True),
+        rate_limit_requests_per_minute=max(
+            1, _int(_env("APEX_RATE_LIMIT_PER_MINUTE", default="120"), 120)
+        ),
+        auth_rate_limit_requests_per_minute=max(
+            1, _int(_env("APEX_AUTH_RATE_LIMIT_PER_MINUTE", default="10"), 10)
+        ),
+        cors_allowed_origins=_env("APEX_CORS_ALLOWED_ORIGINS", default=""),
         server_name=_env("APEX_SERVER_NAME", default="127.0.0.1"),
         server_port=_bounded_int(
             _env("APEX_SERVER_PORT", default="7860"),
