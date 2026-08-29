@@ -105,8 +105,18 @@ class BM25Index:
     def invalidate(self) -> None:
         self._version = -1
 
-    def search(self, query: str, user_id: str, k: int = 5) -> list[RetrievedChunk]:
-        """Top-k chunks owned by ``user_id`` by BM25 score. Higher is better."""
+    def search(
+        self,
+        query: str,
+        user_id: str,
+        k: int = 5,
+        document_ids: list[str] | None = None,
+    ) -> list[RetrievedChunk]:
+        """Top-k chunks owned by ``user_id`` by BM25 score. Higher is better.
+
+        ``document_ids`` (Phase 67) restricts candidates to one knowledge-base
+        collection, mirroring ``ChromaVectorStore.search``'s parameter.
+        """
         index = self._ensure_built(user_id)
         if index is None:
             return []
@@ -115,11 +125,18 @@ class BM25Index:
             return []
         scores = index.bm25.get_scores(tokens)
         query_terms = set(tokens)
+        allowed_documents = set(document_ids) if document_ids is not None else None
         # BM25Plus adds a positive delta even when a document contains none of
         # the query terms. Explicit overlap filtering prevents those baseline
         # scores from turning unrelated chunks into apparent keyword hits.
         eligible = [
-            i for i in range(len(scores)) if query_terms.intersection(index.token_sets[i])
+            i
+            for i in range(len(scores))
+            if query_terms.intersection(index.token_sets[i])
+            and (
+                allowed_documents is None
+                or index.metadatas[i].get("document_id") in allowed_documents
+            )
         ]
         ranked = sorted(eligible, key=lambda i: scores[i], reverse=True)[:k]
 

@@ -13,6 +13,10 @@ const state = {
   currentView: "chat",
   config: null,
   models: [],
+  collections: [],
+  // Documents page filter/upload target: null = all documents, "" =
+  // uncategorized only, a real ID = that one collection (Phase 66).
+  activeCollectionId: null,
   preferences: {
     theme: localStorage.getItem("apex.theme") || "system",
     enterToSend: localStorage.getItem("apex.enterToSend") !== "false",
@@ -344,7 +348,7 @@ function showView(name) {
   state.currentView = name;
   $$(".view").forEach(view => view.classList.toggle("active", view.id === `${name}View`));
   $$("[data-view]").forEach(button => button.classList.toggle("active", button.dataset.view === name));
-  if (name === "chat") $("#topbarTitle").textContent = state.currentConversation?.title || "New conversation";
+  if (name === "chat") { $("#topbarTitle").textContent = state.currentConversation?.title || "New conversation"; syncConversationCollectionSelect(); }
   else $("#topbarTitle").textContent = name[0].toUpperCase() + name.slice(1);
   if (name === "documents") loadDocuments();
   if (name === "settings") { loadMemories(); loadAccount(); }
@@ -645,7 +649,7 @@ async function sendMessage({ regenerate = false } = {}) {
   try {
     const response = await request("/chat/stream", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, conversation_id: state.currentConversation?.id || null, request_id: state.requestId, regenerate, use_memory: state.preferences.useMemory }),
+      body: JSON.stringify({ question, conversation_id: state.currentConversation?.id || null, request_id: state.requestId, regenerate, use_memory: state.preferences.useMemory, collection_id: state.currentConversation?.id ? null : ($("#conversationCollection").value || null) }),
     });
     if (!response.ok) throw await errorFromResponse(response);
     const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
@@ -675,6 +679,7 @@ function handleStreamEvent(event) {
   if (event.type === "meta") {
     state.currentConversation = event.conversation;
     $("#topbarTitle").textContent = event.conversation.title;
+    syncConversationCollectionSelect();
     mergeMemoryCandidates(event.memory_candidates || []);
     return;
   }
@@ -737,6 +742,11 @@ function renderAttachmentTray() {
 async function uploadOne(item) {
   item.status = "uploading"; renderAttachmentTray();
   const form = new FormData(); form.append("file", item.file, item.file.name);
+  // Documents page: whatever collection filter is active. Chat composer: the
+  // current conversation's own knowledge base, so an attachment is
+  // immediately retrievable in that same chat.
+  const targetCollection = state.currentView === "documents" ? state.activeCollectionId : state.currentConversation?.collection_id;
+  if (targetCollection) form.append("collection_id", targetCollection);
   try {
     const result = await api("/documents/upload", { method: "POST", body: form });
     item.status = "done"; item.result = result; renderAttachmentTray(); toast(result.message, "success"); return true;
@@ -758,19 +768,28 @@ async function uploadDocumentPage(files) {
 
 async function loadDocuments() {
   try {
-    const documents = await api("/documents");
+    const query = state.activeCollectionId !== null ? `?collection_id=${encodeURIComponent(state.activeCollectionId)}` : "";
+    const documents = await api(`/documents${query}`);
     $("#documentCount").textContent = documents.length;
     $("#librarySummary").textContent = `${documents.length} document${documents.length === 1 ? "" : "s"}`;
     const library = $("#documentLibrary"); library.replaceChildren();
     if (!documents.length) { library.innerHTML = '<div class="library-empty"><div><strong>No documents indexed yet</strong>Drop a file above to give Apex AI grounded knowledge.</div></div>'; return; }
+    const collectionOptions = collectionId => ['<option value="">Uncategorized</option>', ...state.collections.map(c => `<option value="${escapeHTML(c.id)}"${collectionId === c.id ? " selected" : ""}>${escapeHTML(c.name)}</option>`)].join("");
     documents.forEach(item => {
       const row = document.createElement("div"); row.className = "document-row";
-      row.innerHTML = `<span class="document-type">${escapeHTML(item.file_type)}</span><div class="document-name"><strong></strong><span>${item.looks_medical ? "Medical content detected" : "General document"}</span></div><div class="document-stat"><b>${item.pages}</b><span>Pages</span></div><div class="document-stat"><b>${item.chunks}</b><span>Chunks</span></div><div class="document-stat"><b>${escapeHTML(formatDate(item.created_at))}</b><span>Added</span></div><div class="document-actions"><button class="reindex-doc" title="Re-index">${icons.retry}</button><button class="delete-doc" title="Delete">${icons.trash}</button></div>`;
+      row.innerHTML = `<span class="document-type">${escapeHTML(item.file_type)}</span><div class="document-name"><strong></strong><span>${item.looks_medical ? "Medical content detected" : "General document"}</span></div><div class="document-stat"><b>${item.pages}</b><span>Pages</span></div><div class="document-stat"><b>${item.chunks}</b><span>Chunks</span></div><div class="document-stat"><b>${escapeHTML(formatDate(item.created_at))}</b><span>Added</span></div><select class="document-collection-select" aria-label="Collection for this document">${collectionOptions(item.collection_id)}</select><div class="document-actions"><button class="reindex-doc" title="Re-index">${icons.retry}</button><button class="delete-doc" title="Delete">${icons.trash}</button></div>`;
       $(".document-name strong", row).textContent = item.name;
+      $(".document-collection-select", row).addEventListener("change", event => moveDocumentToCollection(item, event.target.value));
       $(".reindex-doc", row).addEventListener("click", () => reindexDocument(item));
       $(".delete-doc", row).addEventListener("click", () => deleteDocument(item)); library.append(row);
     });
   } catch (error) { $("#documentLibrary").innerHTML = `<div class="library-empty"><div><strong>Documents unavailable</strong>${escapeHTML(errorMessage(error))}</div></div>`; }
+}
+
+async function moveDocumentToCollection(item, collectionId) {
+  try { await api(`/documents/${item.document_id}/collection`, { method: "PATCH", body: JSON.stringify({ collection_id: collectionId || null }) }); toast(`${item.name} moved.`, "success"); }
+  catch (error) { toast(errorMessage(error), "error"); }
+  if (state.activeCollectionId !== null) await loadDocuments();
 }
 
 async function reindexDocument(document) {
@@ -782,6 +801,98 @@ async function deleteDocument(document) {
   if (!accepted) return;
   try { await api(`/documents/${document.document_id}`, { method: "DELETE" }); toast(`${document.name} deleted.`, "success"); await loadDocuments(); await loadConfig(); }
   catch (error) { toast(errorMessage(error), "error"); }
+}
+
+// ---------------- collections (Phase 66/67) ----------------
+
+async function loadCollections() {
+  try { state.collections = await api("/collections"); }
+  catch (_) { state.collections = []; }
+  renderCollectionFilterRow();
+  renderConversationCollectionOptions();
+}
+
+function renderCollectionFilterRow() {
+  const row = $("#collectionFilterRow"); if (!row) return;
+  row.replaceChildren();
+  const makeChip = (id, label) => {
+    const button = document.createElement("button");
+    button.type = "button"; button.className = "collection-chip";
+    button.classList.toggle("active", state.activeCollectionId === id);
+    button.textContent = label;
+    button.addEventListener("click", () => { state.activeCollectionId = id; renderCollectionFilterRow(); updateUploadCollectionNote(); loadDocuments(); });
+    return button;
+  };
+  row.append(makeChip(null, "All documents"), makeChip("", "Uncategorized"));
+  state.collections.forEach(collection => {
+    const group = document.createElement("div"); group.className = "collection-chip-group";
+    group.innerHTML = `<button type="button" class="collection-chip"></button><button type="button" class="collection-chip-action" title="Rename collection">${icons.edit}</button><button type="button" class="collection-chip-action" title="Delete collection">${icons.trash}</button>`;
+    const [selectButton, renameButton, deleteButton] = group.children;
+    selectButton.textContent = collection.name;
+    selectButton.classList.toggle("active", state.activeCollectionId === collection.id);
+    selectButton.addEventListener("click", () => { state.activeCollectionId = collection.id; renderCollectionFilterRow(); updateUploadCollectionNote(); loadDocuments(); });
+    renameButton.addEventListener("click", () => renameCollection(collection));
+    deleteButton.addEventListener("click", () => deleteCollectionAction(collection));
+    row.append(group);
+  });
+  const addButton = document.createElement("button");
+  addButton.type = "button"; addButton.className = "collection-chip collection-chip-add"; addButton.textContent = "+ New collection";
+  addButton.addEventListener("click", createCollection);
+  row.append(addButton);
+  updateUploadCollectionNote();
+}
+
+function updateUploadCollectionNote() {
+  const note = $("#uploadCollectionNote"); if (!note) return;
+  const collection = state.activeCollectionId ? state.collections.find(c => c.id === state.activeCollectionId) : null;
+  note.textContent = collection ? `New uploads join "${collection.name}"` : "";
+}
+
+async function createCollection() {
+  const name = prompt("New collection name");
+  if (!name || !name.trim()) return;
+  try {
+    const created = await api("/collections", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+    await loadCollections();
+    state.activeCollectionId = created.id; renderCollectionFilterRow(); loadDocuments();
+  } catch (error) { toast(errorMessage(error), "error"); }
+}
+
+async function renameCollection(collection) {
+  const name = prompt("Rename collection", collection.name);
+  if (!name || !name.trim() || name.trim() === collection.name) return;
+  try { await api(`/collections/${collection.id}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) }); await loadCollections(); }
+  catch (error) { toast(errorMessage(error), "error"); }
+}
+
+async function deleteCollectionAction(collection) {
+  const accepted = await confirmAction("Delete collection?", `“${collection.name}” will be removed. Its documents are not deleted — they become uncategorized.`, "Delete collection");
+  if (!accepted) return;
+  try {
+    await api(`/collections/${collection.id}`, { method: "DELETE" });
+    if (state.activeCollectionId === collection.id) state.activeCollectionId = null;
+    await loadCollections(); await loadDocuments();
+    toast(`${collection.name} deleted.`, "success");
+  } catch (error) { toast(errorMessage(error), "error"); }
+}
+
+function renderConversationCollectionOptions() {
+  const select = $("#conversationCollection"); if (!select) return;
+  select.innerHTML = '<option value="">All documents</option>' + state.collections.map(c => `<option value="${escapeHTML(c.id)}">${escapeHTML(c.name)}</option>`).join("");
+  syncConversationCollectionSelect();
+}
+
+function syncConversationCollectionSelect() {
+  const select = $("#conversationCollection"); if (!select) return;
+  select.value = state.currentConversation?.collection_id || "";
+}
+
+async function changeConversationCollection(collectionId) {
+  if (!state.currentConversation) return;  // a not-yet-created chat: sendMessage() reads the select directly
+  try {
+    const updated = await api(`/conversations/${state.currentConversation.id}/collection`, { method: "PATCH", body: JSON.stringify({ collection_id: collectionId || null }) });
+    state.currentConversation = { ...state.currentConversation, ...updated };
+  } catch (error) { toast(errorMessage(error), "error"); syncConversationCollectionSelect(); }
 }
 
 function confirmAction(title, text, actionLabel) {
@@ -854,6 +965,7 @@ function bindEvents() {
   $("#themeQuickToggle").addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
   $$('[data-theme-choice]').forEach(button => button.addEventListener("click", () => setTheme(button.dataset.themeChoice)));
   $("#modelSelect").addEventListener("change", selectModel);
+  $("#conversationCollection").addEventListener("change", event => changeConversationCollection(event.target.value));
   $("#messageInput").addEventListener("input", () => { autoResizeComposer(); updateSendState(); });
   $("#messageInput").addEventListener("keydown", event => { if (event.key === "Enter" && !event.shiftKey && state.preferences.enterToSend) { event.preventDefault(); sendMessage(); } });
   $("#sendButton").addEventListener("click", () => sendMessage());
@@ -886,6 +998,7 @@ function bindEvents() {
 
 async function initialize() {
   setTheme(state.preferences.theme); bindEvents(); renderMessages(); updateSendState();
+  await loadCollections();  // documents render collection dropdowns from state.collections
   await Promise.all([
     loadConfig(),
     loadConversations(),

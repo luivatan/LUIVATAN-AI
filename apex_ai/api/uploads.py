@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from apex_ai.api.auth import make_require_user_dependency
 from apex_ai.api.errors import APIError, service_not_ready_error
@@ -25,7 +25,9 @@ def create_upload_router(services) -> APIRouter:
 
     @router.post("/documents/upload", response_model=UploadOut)
     async def upload_document(
-        file: Annotated[UploadFile, File()], user=Depends(require_user)
+        file: Annotated[UploadFile, File()],
+        collection_id: Annotated[str, Form()] = "",
+        user=Depends(require_user),
     ):
         staging: Path | None = None
         try:
@@ -43,6 +45,11 @@ def create_upload_router(services) -> APIRouter:
                     ),
                     code="unsupported_file_type",
                 )
+            if collection_id and (
+                services.collections is None
+                or services.collections.get(user.id, collection_id) is None
+            ):
+                raise APIError(404, "Collection not found.", code="collection_not_found")
 
             max_bytes = services.settings.max_upload_mb * 1024 * 1024
             staging = services.settings.upload_dir / ".staging" / str(uuid.uuid4())
@@ -73,7 +80,9 @@ def create_upload_router(services) -> APIRouter:
                     code="empty_upload",
                 )
 
-            result = services.ingestion.ingest_path(staged_file, user.id)
+            result = services.ingestion.ingest_path(
+                staged_file, user.id, collection_id=collection_id
+            )
             return {
                 "status": result.status,
                 "document_id": result.document_id,

@@ -239,18 +239,34 @@ class ChromaVectorStore:
 
     # -- read path ------------------------------------------------------------
 
-    def search(self, query_text: str, user_id: str, k: int = 5) -> list[RetrievedChunk]:
-        """Vector search scoped to ``user_id``; sorted by cosine similarity."""
+    def search(
+        self,
+        query_text: str,
+        user_id: str,
+        k: int = 5,
+        document_ids: list[str] | None = None,
+    ) -> list[RetrievedChunk]:
+        """Vector search scoped to ``user_id``; sorted by cosine similarity.
+
+        ``document_ids`` (Phase 67) further restricts the search to one
+        knowledge-base collection's documents, when a conversation has one
+        selected; ``None`` (the default) searches the whole account library.
+        """
+        if document_ids is not None and not document_ids:
+            return []  # Chroma's $in rejects an empty list; zero IDs = zero matches anyway
         count = self.count(user_id)
         if count == 0:
             return []
         k = min(k, count)
+        where = {"user_id": user_id}
+        if document_ids is not None:
+            where = {"$and": [where, {"document_id": {"$in": document_ids}}]}
         query_embedding = self.embedding.embed_query(query_text)
         try:
             result = self.collection.query(
                 query_embeddings=[query_embedding],
                 n_results=k,
-                where={"user_id": user_id},
+                where=where,
                 include=["documents", "metadatas", "distances"],
             )
         except Exception as error:

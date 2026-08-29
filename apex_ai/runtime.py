@@ -60,6 +60,7 @@ class ApexServices:
     models: ModelManager | None = None
     auth: AuthService | None = None
     default_local_user: User | None = None
+    collections: Any = None
     _extras: dict = field(default_factory=dict)
 
     @property
@@ -243,6 +244,10 @@ def build_services(
         from apex_ai.documents.service import IngestionService
 
         services.ingestion = IngestionService(settings, services.store)
+
+        from apex_ai.documents.collections import CollectionStore
+
+        services.collections = CollectionStore(settings.collections_db_path)
 
         # Phase 55: pre-Phase-55 chunks/registry entries have no owner yet;
         # assign them to the default local account, same precedent as

@@ -48,6 +48,10 @@ class Conversation:
     updated_at: str
     message_count: int = 0
     preview: str = ""
+    # Phase 67: "" means no knowledge-base restriction (retrieval searches the
+    # whole account's library, the pre-Phase-67 default). A real collection ID
+    # scopes this conversation's retrieval to that collection only.
+    collection_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -57,6 +61,7 @@ class Conversation:
             "updated_at": self.updated_at,
             "message_count": self.message_count,
             "preview": self.preview,
+            "collection_id": self.collection_id or None,
         }
 
 
@@ -166,6 +171,14 @@ class ConversationStore:
                     "CREATE INDEX IF NOT EXISTS idx_conversations_user "
                     "ON conversations(user_id, updated_at DESC)"
                 )
+            # Phase 67: which knowledge-base collection (if any) this
+            # conversation's retrieval is scoped to. "" = unscoped (searches
+            # the whole account library), same as every conversation before
+            # this phase - no backfill needed, the default is the old behavior.
+            if "collection_id" not in conversation_columns:
+                connection.execute(
+                    "ALTER TABLE conversations ADD COLUMN collection_id TEXT NOT NULL DEFAULT ''"
+                )
 
     def backfill_owner(self, user_id: str) -> int:
         """Phase 55: assign every not-yet-owned conversation (from before this
@@ -180,15 +193,19 @@ class ConversationStore:
             )
             return cursor.rowcount
 
-    def create(self, user_id: str, title: str = "New conversation") -> Conversation:
+    def create(
+        self, user_id: str, title: str = "New conversation", collection_id: str = ""
+    ) -> Conversation:
         conversation_id = str(uuid.uuid4())
         now = _now()
+        clean_title = title.strip()[:100] or "New conversation"
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO conversations(id,user_id,title,created_at,updated_at) VALUES (?,?,?,?,?)",
-                (conversation_id, user_id, title.strip()[:100] or "New conversation", now, now),
+                "INSERT INTO conversations(id,user_id,title,created_at,updated_at,collection_id) "
+                "VALUES (?,?,?,?,?,?)",
+                (conversation_id, user_id, clean_title, now, now, collection_id),
             )
-        return Conversation(conversation_id, title, now, now)
+        return Conversation(conversation_id, clean_title, now, now, collection_id=collection_id)
 
     def get(self, user_id: str, conversation_id: str) -> Conversation | None:
         with self._connect() as connection:
@@ -244,6 +261,22 @@ class ConversationStore:
             cursor = connection.execute(
                 "UPDATE conversations SET title=?,updated_at=? WHERE id=? AND user_id=?",
                 (clean, _now(), conversation_id, user_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(conversation_id)
+        result = self.get(user_id, conversation_id)
+        assert result is not None
+        return result
+
+    def set_collection(
+        self, user_id: str, conversation_id: str, collection_id: str
+    ) -> Conversation:
+        """Scope (or unscope, with ``collection_id=""``) this conversation's
+        retrieval to one knowledge-base collection (Phase 67)."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE conversations SET collection_id=?,updated_at=? WHERE id=? AND user_id=?",
+                (collection_id, _now(), conversation_id, user_id),
             )
             if cursor.rowcount == 0:
                 raise KeyError(conversation_id)
@@ -437,6 +470,7 @@ class ConversationStore:
             updated_at=row["updated_at"],
             message_count=int(row["message_count"]) if "message_count" in keys else 0,
             preview=row["preview"] if "preview" in keys else "",
+            collection_id=row["collection_id"] if "collection_id" in keys else "",
         )
 
     @staticmethod

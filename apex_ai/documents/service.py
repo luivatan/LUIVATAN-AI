@@ -81,6 +81,9 @@ class DocumentInfo:
     # Phase 55: defaults to "" so a pre-Phase-55 registry file (entries with no
     # owner yet) still loads; backfill_owner() assigns those to a real account.
     user_id: str = ""
+    # Phase 66: "" means no collection (the whole-library default, and every
+    # document before this phase existed).
+    collection_id: str = ""
 
     def as_dict(self) -> dict:
         return {
@@ -94,6 +97,7 @@ class DocumentInfo:
             "empty_pages": self.empty_pages,
             "looks_medical": self.looks_medical,
             "user_id": self.user_id,
+            "collection_id": self.collection_id or None,
         }
 
 
@@ -155,9 +159,14 @@ class IngestionService:
     # -- ingest ---------------------------------------------------------------
 
     def ingest_path(
-        self, path: str | Path, user_id: str, force: bool = False
+        self,
+        path: str | Path,
+        user_id: str,
+        force: bool = False,
+        collection_id: str = "",
     ) -> IngestResult:
-        """Ingest one supported file into ``user_id``'s library.
+        """Ingest one supported file into ``user_id``'s library, optionally
+        into one named collection (Phase 66; ``""`` = no collection).
 
         `force=True` re-indexes an existing doc. Dedup is per-account: two
         accounts uploading identical bytes each get their own indexed copy
@@ -250,6 +259,7 @@ class IngestionService:
                 empty_pages=len(document.empty_pages),
                 looks_medical=looks_medical,
                 user_id=user_id,
+                collection_id=collection_id,
             )
             self._save_registry()
 
@@ -277,7 +287,11 @@ class IngestionService:
                 why="The registry points to a file that was moved or deleted.",
                 fix="Upload the file again.",
             )
-        return self.ingest_path(info.path, user_id, force=True)
+        # Preserve the existing collection assignment - re-indexing is a
+        # content refresh, not a reason to un-organize the document.
+        return self.ingest_path(
+            info.path, user_id, force=True, collection_id=info.collection_id
+        )
 
     def remove(self, document_id: str, user_id: str) -> str:
         removed = self.store.delete_document(document_id, user_id)
@@ -285,11 +299,52 @@ class IngestionService:
         self._save_registry()
         return f"Removed document {document_id[:12]} ({removed} chunk(s) deleted)."
 
-    def list_documents(self, user_id: str) -> list[DocumentInfo]:
-        return sorted(
-            (info for (_, owner), info in self._registry.items() if owner == user_id),
-            key=lambda i: i.name.lower(),
+    def list_documents(
+        self, user_id: str, collection_id: str | None = None
+    ) -> list[DocumentInfo]:
+        """All of ``user_id``'s documents, or (Phase 66) only those in one
+        collection when ``collection_id`` is given - including ``""`` to
+        mean specifically the uncategorized ones, distinct from ``None``
+        meaning "don't filter at all"."""
+        matches = (
+            info
+            for (_, owner), info in self._registry.items()
+            if owner == user_id
+            and (collection_id is None or info.collection_id == collection_id)
         )
+        return sorted(matches, key=lambda i: i.name.lower())
+
+    def document_ids_for_collection(self, user_id: str, collection_id: str) -> list[str]:
+        """Document IDs to restrict retrieval to for a collection-scoped
+        conversation (Phase 67)."""
+        return [info.document_id for info in self.list_documents(user_id, collection_id)]
+
+    def move_to_collection(
+        self, document_id: str, user_id: str, collection_id: str
+    ) -> DocumentInfo:
+        """Reassign (or, with ``collection_id=""``, unassign) one document.
+        A pure registry update - no re-ingestion, no Chroma writes."""
+        info = self._registry.get((document_id, user_id))
+        if info is None:
+            raise KeyError(document_id)
+        info.collection_id = collection_id
+        self._save_registry()
+        return info
+
+    def unassign_collection(self, user_id: str, collection_id: str) -> int:
+        """Clear every document's reference to a collection that's being
+        deleted (Phase 66) - the documents themselves are untouched, they
+        just become uncategorized again."""
+        if not collection_id:
+            return 0
+        changed = 0
+        for (_, owner), info in self._registry.items():
+            if owner == user_id and info.collection_id == collection_id:
+                info.collection_id = ""
+                changed += 1
+        if changed:
+            self._save_registry()
+        return changed
 
     def stats(self, user_id: str | None = None) -> dict:
         """Document/chunk counts. ``user_id=None`` is the whole instance's

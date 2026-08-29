@@ -147,7 +147,7 @@ def test_semantic_failure_falls_back_to_exact_bm25(settings):
         version = 0
 
         @staticmethod
-        def search(query, user_id, k):
+        def search(query, user_id, k, document_ids=None):
             raise RuntimeError("embedding unavailable")
 
         @staticmethod
@@ -165,12 +165,12 @@ def test_keyword_failure_falls_back_to_semantic(settings):
 
     class Store:
         @staticmethod
-        def search(query, user_id, k):
+        def search(query, user_id, k, document_ids=None):
             return [hit]
 
     class BrokenKeyword:
         @staticmethod
-        def search(query, user_id, k):
+        def search(query, user_id, k, document_ids=None):
             raise RuntimeError("BM25 unavailable")
 
     run = HybridRetriever(Store(), settings, BrokenKeyword()).retrieve_with_trace(
@@ -185,13 +185,13 @@ def test_semantic_and_keyword_candidate_pool_sizes_are_honored(settings):
 
     class Store:
         @staticmethod
-        def search(query, user_id, k):
+        def search(query, user_id, k, document_ids=None):
             requested["semantic"] = k
             return []
 
     class Keyword:
         @staticmethod
-        def search(query, user_id, k):
+        def search(query, user_id, k, document_ids=None):
             requested["keyword"] = k
             return []
 

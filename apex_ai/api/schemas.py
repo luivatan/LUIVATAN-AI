@@ -32,6 +32,7 @@ class ConversationOut(BaseModel):
     updated_at: str
     message_count: int
     preview: str
+    collection_id: str | None = None
 
 
 class ConversationDetailOut(ConversationOut):
@@ -91,6 +92,14 @@ class DocumentOut(BaseModel):
     created_at: str
     empty_pages: int
     looks_medical: bool
+    collection_id: str | None = None
+
+
+class CollectionOut(BaseModel):
+    id: str
+    name: str
+    created_at: str
+    updated_at: str
 
 
 class ModelEntryOut(BaseModel):

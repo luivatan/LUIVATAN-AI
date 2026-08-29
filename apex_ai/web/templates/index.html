@@ -67,11 +67,17 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
         </button>
         <div class="topbar-title" id="topbarTitle">New conversation</div>
-        <label class="model-picker" title="Select the local model used by the existing backend">
-          <span class="model-pulse"></span>
-          <select id="modelSelect" aria-label="AI model"><option>Loading models…</option></select>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
-        </label>
+        <div class="topbar-controls">
+          <label class="model-picker collection-picker" title="Scope this conversation's retrieval to one knowledge-base collection">
+            <select id="conversationCollection" aria-label="Knowledge base"><option value="">All documents</option></select>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
+          </label>
+          <label class="model-picker" title="Select the local model used by the existing backend">
+            <span class="model-pulse"></span>
+            <select id="modelSelect" aria-label="AI model"><option>Loading models…</option></select>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
+          </label>
+        </div>
         <button class="icon-button" id="themeQuickToggle" aria-label="Toggle theme">
           <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/></svg>
           <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.3A8 8 0 0 1 9.7 3.5 8.5 8.5 0 1 0 20.5 14.3z"/></svg>
@@ -119,7 +125,8 @@
       <section class="view page-view" id="documentsView" aria-label="Documents">
         <div class="page-container">
           <div class="page-heading"><div><span class="eyebrow">KNOWLEDGE BASE</span><h1>Documents</h1><p>Everything Apex AI can retrieve and cite in your answers.</p></div><button class="primary-button" id="pageUploadButton"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M5 15v4h14v-4"/></svg>Upload documents</button></div>
-          <div class="upload-zone" id="documentDropZone" tabindex="0"><div class="upload-icon"><svg viewBox="0 0 24 24"><path d="M7 18a4.6 4.6 0 0 1-.4-9.2A6 6 0 0 1 18.2 10 4 4 0 0 1 18 18M12 16V9m0 0-3 3m3-3 3 3"/></svg></div><strong>Drop files here, or click to browse</strong><span>PDF, TXT, Markdown, and JSON · up to <b id="uploadLimit">50 MB</b> each</span></div>
+          <div class="collection-filter-row" id="collectionFilterRow" role="tablist" aria-label="Filter by collection"></div>
+          <div class="upload-zone" id="documentDropZone" tabindex="0"><div class="upload-icon"><svg viewBox="0 0 24 24"><path d="M7 18a4.6 4.6 0 0 1-.4-9.2A6 6 0 0 1 18.2 10 4 4 0 0 1 18 18M12 16V9m0 0-3 3m3-3 3 3"/></svg></div><strong>Drop files here, or click to browse</strong><span>PDF, TXT, Markdown, and JSON · up to <b id="uploadLimit">50 MB</b> each<br><span id="uploadCollectionNote"></span></span></div>
           <div class="section-header"><div><h2>Indexed documents</h2><span id="librarySummary">Loading…</span></div><button class="quiet-button" id="refreshDocuments"><svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.3-2.5L20 9M4 15l2.6 2.5A7 7 0 0 0 17.9 15"/></svg>Refresh</button></div>
           <div class="document-library" id="documentLibrary"></div>
           <div class="medical-notice"><svg viewBox="0 0 24 24"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 10v6M12 7h.01"/></svg><p><strong>Medical-use notice</strong>Apex AI reports information found in your documents. It is not medical advice, diagnosis, or a substitute for a qualified healthcare professional. Always verify the cited source.</p></div>

@@ -10,13 +10,14 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Response
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from apex_ai import APP_NAME, __version__
 from apex_ai.api.auth import create_auth_router, make_require_user_dependency
 from apex_ai.api.chat import GenerationManager, create_chat_router
+from apex_ai.api.collections import create_collections_router
 from apex_ai.api.errors import install_error_handlers, service_not_ready_error
 from apex_ai.api.memory import create_memory_router
 from apex_ai.api.rate_limit import install_rate_limiting
@@ -49,6 +50,11 @@ class ModelSelection(BaseModel):
 class IngestRequest(BaseModel):
     path: str = Field(min_length=1)
     force: bool = False
+    collection_id: str | None = None
+
+
+class DocumentCollectionUpdate(BaseModel):
+    collection_id: str | None = None
 
 
 class QueryRequest(BaseModel):
@@ -221,15 +227,20 @@ def create_api(
     require_user = make_require_user_dependency(services)
 
     @app.get("/documents", response_model=list[DocumentOut])
-    def documents(user=Depends(require_user)):
+    def documents(collection_id: str | None = None, user=Depends(require_user)):
         _ensure_ready()
-        return [document.as_dict() for document in services.ingestion.list_documents(user.id)]
+        return [
+            document.as_dict()
+            for document in services.ingestion.list_documents(user.id, collection_id)
+        ]
 
     @app.post("/documents/ingest", response_model=IngestOut)
     def ingest(payload: IngestRequest, user=Depends(require_user)):
         """Local automation endpoint. Browsers use safe multipart /documents/upload."""
         _ensure_ready()
-        result = services.ingestion.ingest_path(payload.path, user.id, force=payload.force)
+        result = services.ingestion.ingest_path(
+            payload.path, user.id, force=payload.force, collection_id=payload.collection_id or ""
+        )
         return {
             "status": result.status,
             "document_id": result.document_id,
@@ -242,6 +253,22 @@ def create_api(
     def delete_document(document_id: str, user=Depends(require_user)):
         _ensure_ready()
         return {"message": services.ingestion.remove(document_id, user.id)}
+
+    @app.patch("/documents/{document_id}/collection", response_model=DocumentOut)
+    def move_document(
+        document_id: str, payload: DocumentCollectionUpdate, user=Depends(require_user)
+    ):
+        _ensure_ready()
+        collection_id = payload.collection_id or ""
+        if collection_id and (
+            services.collections is None or services.collections.get(user.id, collection_id) is None
+        ):
+            raise HTTPException(status_code=404, detail="Collection not found.")
+        try:
+            info = services.ingestion.move_to_collection(document_id, user.id, collection_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Document not found.") from error
+        return info.as_dict()
 
     @app.post("/query", response_model=QueryOut)
     def query(payload: QueryRequest):
@@ -272,6 +299,7 @@ def create_api(
     app.include_router(create_auth_router(services))
     app.include_router(create_upload_router(services))
     app.include_router(create_memory_router(services))
+    app.include_router(create_collections_router(services))
     app.include_router(create_chat_router(services, conversations, app.state.generations))
 
     @app.delete("/conversations", response_model=DeletedCountOut)

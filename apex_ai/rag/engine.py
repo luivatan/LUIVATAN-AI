@@ -264,6 +264,7 @@ class RagEngine:
         question: str,
         use_memory: bool = True,
         history_override: list[dict] | None = None,
+        document_ids: list[str] | None = None,
     ) -> PreparedTurn:
         prepare_started = time.perf_counter()
         history_stage = time.perf_counter()
@@ -346,13 +347,16 @@ class RagEngine:
             run = self.retriever.retrieve_with_trace(
                 turn.queries,
                 self.user_id,
+                document_ids=document_ids,
                 include_debug=bool(getattr(self.settings, "rag_debug", False)),
             )
             turn.candidates = run.chunks
             turn.retrieval_trace = run.trace
             turn.errors.extend(run.trace.errors)
         else:  # compatibility with custom retrievers
-            turn.candidates = self.retriever.retrieve(turn.queries, self.user_id)
+            turn.candidates = self.retriever.retrieve(
+                turn.queries, self.user_id, document_ids=document_ids
+            )
         turn.timings["retrieval"] = round((time.perf_counter() - stage) * 1000, 3)
         if turn.retrieval_trace:
             for name, duration in turn.retrieval_trace.timings_ms.items():
@@ -617,11 +621,14 @@ class RagEngine:
         use_memory: bool = True,
         *,
         history_override: list[dict] | None = None,
+        document_ids: list[str] | None = None,
     ) -> AnswerResult:
         """Full non-streaming turn.
 
         ``history_override`` exists for deterministic evaluation fixtures;
         normal UI/API callers use the configured conversation memory.
+        ``document_ids`` (Phase 67) scopes retrieval to one knowledge-base
+        collection when the conversation has one selected.
         """
         if not question or not question.strip():
             return AnswerResult(answer="Please ask a question first.")
@@ -634,7 +641,9 @@ class RagEngine:
             )
 
         started = time.perf_counter()
-        turn = self.prepare(question, use_memory, history_override=history_override)
+        turn = self.prepare(
+            question, use_memory, history_override=history_override, document_ids=document_ids
+        )
         if not turn.supported:
             return self._insufficient(turn)
 
@@ -660,7 +669,13 @@ class RagEngine:
             time.perf_counter() - generation_started,
         )
 
-    def ask_stream(self, question: str, use_memory: bool = True) -> Iterator[dict]:
+    def ask_stream(
+        self,
+        question: str,
+        use_memory: bool = True,
+        *,
+        document_ids: list[str] | None = None,
+    ) -> Iterator[dict]:
         """Yield real provider tokens, then one final AnswerResult event."""
         if not question or not question.strip():
             yield {"type": "final", "result": AnswerResult(answer="Please ask a question first.")}
@@ -678,7 +693,7 @@ class RagEngine:
             return
 
         started = time.perf_counter()
-        turn = self.prepare(question, use_memory)
+        turn = self.prepare(question, use_memory, document_ids=document_ids)
         if not turn.supported:
             yield {"type": "final", "result": self._insufficient(turn)}
             return

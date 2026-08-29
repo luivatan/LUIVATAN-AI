@@ -16,6 +16,7 @@ def web_services(settings, ingestion, embeddings, store):
     from apex_ai.auth.service import AuthService
     from apex_ai.auth.sessions import SessionStore
     from apex_ai.auth.users import UserStore
+    from apex_ai.documents.collections import CollectionStore
     from apex_ai.memory.confirmation import MemoryConfirmationService
     from apex_ai.memory.conversation import ConversationMemory
     from apex_ai.memory.extraction import MemoryCandidateExtractor
@@ -78,6 +79,7 @@ def web_services(settings, ingestion, embeddings, store):
         models=ModelManager(settings),
         auth=auth,
         default_local_user=default_local_user,
+        collections=CollectionStore(settings.collections_db_path),
     )
 
 
@@ -153,6 +155,8 @@ def test_web_shell_is_chat_first_and_has_security_headers(web_client):
     assert "Documents" in response.text
     assert "Settings" in response.text
     assert "memoryConfirmationRegion" in response.text
+    assert "conversationCollection" in response.text
+    assert "collectionFilterRow" in response.text
     assert "dashboard" not in response.text.lower()
     assert "default-src 'self'" in response.headers["content-security-policy"]
 
@@ -202,6 +206,13 @@ def test_static_assets_include_responsive_themes_and_code_blocks(web_client):
     # Phase 52: account/sign-out section in Settings.
     assert "function loadAccount" in javascript.text
     assert "auth/logout" in javascript.text
+    # Phase 66/67: document collections and knowledge-base selection.
+    assert ".collection-chip" in css.text
+    assert ".document-collection-select" in css.text
+    assert "function loadCollections" in javascript.text
+    assert "function renderCollectionFilterRow" in javascript.text
+    assert "conversationCollection" in javascript.text
+    assert "/collections" in javascript.text
 
 
 def test_streaming_chat_uses_real_engine_and_persists_verified_citations(web_client):
@@ -706,6 +717,197 @@ def test_uploaded_documents_are_isolated_between_accounts(web_services):
     )
     final = next(item for item in stream if item["type"] == "final")
     assert all("burn_care" not in citation.get("source", "") for citation in final["citations"])
+
+
+def test_collection_crud_via_the_api(web_client):
+    created = web_client.post("/collections", json={"name": "Medical research"})
+    assert created.status_code == 201
+    collection = created.json()
+    assert collection["name"] == "Medical research"
+
+    listed = web_client.get("/collections").json()
+    assert [c["id"] for c in listed] == [collection["id"]]
+
+    renamed = web_client.patch(f"/collections/{collection['id']}", json={"name": "Renamed"})
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Renamed"
+
+    assert web_client.delete(f"/collections/{collection['id']}").json() == {"deleted": True}
+    assert web_client.get("/collections").json() == []
+    assert web_client.delete(f"/collections/{collection['id']}").status_code == 404
+
+
+def test_upload_into_a_collection_and_filter_documents_by_it(web_client):
+    collection = web_client.post("/collections", json={"name": "Burns"}).json()
+    content = (DATA_DIR / "burn_care.md").read_bytes()
+
+    uploaded = web_client.post(
+        "/documents/upload",
+        files={"file": ("burn_care.md", content, "text/markdown")},
+        data={"collection_id": collection["id"]},
+    )
+    assert uploaded.status_code == 200
+
+    scoped = web_client.get("/documents", params={"collection_id": collection["id"]}).json()
+    assert {d["name"] for d in scoped} == {"burn_care.md"}
+    unscoped = web_client.get("/documents").json()
+    assert {d["name"] for d in unscoped} >= {"sample_first_aid.pdf", "burn_care.md"}
+
+
+def test_upload_into_a_nonexistent_collection_is_rejected(web_client):
+    content = (DATA_DIR / "burn_care.md").read_bytes()
+    response = web_client.post(
+        "/documents/upload",
+        files={"file": ("burn_care.md", content, "text/markdown")},
+        data={"collection_id": "does-not-exist"},
+    )
+    assert response.status_code == 404
+
+
+def test_move_document_between_collections_via_the_api(web_client):
+    collection = web_client.post("/collections", json={"name": "Work"}).json()
+    documents = web_client.get("/documents").json()
+    document_id = documents[0]["document_id"]
+
+    moved = web_client.patch(
+        f"/documents/{document_id}/collection", json={"collection_id": collection["id"]}
+    )
+    assert moved.status_code == 200
+    assert moved.json()["collection_id"] == collection["id"]
+
+    unassigned = web_client.patch(
+        f"/documents/{document_id}/collection", json={"collection_id": None}
+    )
+    assert unassigned.json()["collection_id"] is None
+
+
+def test_move_document_to_a_nonexistent_collection_is_rejected(web_client):
+    documents = web_client.get("/documents").json()
+    document_id = documents[0]["document_id"]
+
+    response = web_client.patch(
+        f"/documents/{document_id}/collection", json={"collection_id": "does-not-exist"}
+    )
+    assert response.status_code == 404
+
+
+def test_moving_a_nonexistent_document_is_rejected(web_client):
+    response = web_client.patch(
+        "/documents/does-not-exist/collection", json={"collection_id": None}
+    )
+    assert response.status_code == 404
+
+
+def test_deleting_a_collection_unassigns_its_documents_not_deletes_them(web_client):
+    collection = web_client.post("/collections", json={"name": "Temp"}).json()
+    documents = web_client.get("/documents").json()
+    document_id = documents[0]["document_id"]
+    web_client.patch(
+        f"/documents/{document_id}/collection", json={"collection_id": collection["id"]}
+    )
+
+    assert web_client.delete(f"/collections/{collection['id']}").json() == {"deleted": True}
+
+    remaining = web_client.get("/documents").json()
+    assert any(d["document_id"] == document_id for d in remaining)  # document survives
+    moved_back = next(d for d in remaining if d["document_id"] == document_id)
+    assert moved_back["collection_id"] is None
+
+
+def test_conversation_scoped_to_a_collection_only_retrieves_from_it(web_client):
+    """Phase 67 end-to-end: a conversation created against one collection
+    must answer from that collection's documents and refuse a question only
+    a document outside the collection could answer."""
+    collection = web_client.post("/collections", json={"name": "Burns only"}).json()
+    content = (DATA_DIR / "burn_care.md").read_bytes()
+    web_client.post(
+        "/documents/upload",
+        files={"file": ("burn_care.md", content, "text/markdown")},
+        data={"collection_id": collection["id"]},
+    )
+
+    conversation = web_client.post(
+        "/conversations", json={"collection_id": collection["id"]}
+    ).json()
+    assert conversation["collection_id"] == collection["id"]
+
+    burns_answer = events(
+        web_client.post(
+            "/chat/stream",
+            json={
+                "question": "How should burns be cooled?",
+                "conversation_id": conversation["id"],
+                "request_id": "scoped-supported",
+            },
+        )
+    )
+    final = next(item for item in burns_answer if item["type"] == "final")
+    assert not final["insufficient_evidence"]
+    assert final["citations"]
+
+    fever_answer = events(
+        web_client.post(
+            "/chat/stream",
+            json={
+                "question": "What temperature is a fever in adults?",
+                "conversation_id": conversation["id"],
+                "request_id": "scoped-unsupported",
+            },
+        )
+    )
+    fever_final = next(item for item in fever_answer if item["type"] == "final")
+    assert fever_final["citations"] == []  # sample_first_aid.pdf is outside this collection
+
+
+def test_conversation_collection_can_be_changed_after_creation(web_client):
+    collection = web_client.post("/collections", json={"name": "Later"}).json()
+    conversation = web_client.post("/conversations", json={}).json()
+    assert conversation["collection_id"] is None
+
+    updated = web_client.patch(
+        f"/conversations/{conversation['id']}/collection",
+        json={"collection_id": collection["id"]},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["collection_id"] == collection["id"]
+
+
+def test_chat_stream_lazily_creates_a_collection_scoped_conversation(web_client):
+    """A brand-new chat (no conversation_id yet) can pick its knowledge base
+    on the very first message, not only after the conversation exists."""
+    collection = web_client.post("/collections", json={"name": "First message scope"}).json()
+    content = (DATA_DIR / "burn_care.md").read_bytes()
+    web_client.post(
+        "/documents/upload",
+        files={"file": ("burn_care.md", content, "text/markdown")},
+        data={"collection_id": collection["id"]},
+    )
+
+    stream = events(
+        web_client.post(
+            "/chat/stream",
+            json={
+                "question": "How should burns be cooled?",
+                "collection_id": collection["id"],
+                "request_id": "lazy-create-scoped",
+            },
+        )
+    )
+    assert stream[0]["conversation"]["collection_id"] == collection["id"]
+    final = next(item for item in stream if item["type"] == "final")
+    assert final["citations"]
+
+
+def test_chat_stream_rejects_a_nonexistent_collection_on_lazy_create(web_client):
+    response = web_client.post(
+        "/chat/stream",
+        json={
+            "question": "Anything",
+            "collection_id": "does-not-exist",
+            "request_id": "lazy-create-bad-collection",
+        },
+    )
+    assert response.status_code == 404
 
 
 def test_generation_manager_supports_stop_and_one_request_per_conversation():

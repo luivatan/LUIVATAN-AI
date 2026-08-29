@@ -41,10 +41,15 @@ log = get_logger("api.chat")
 
 class ConversationCreate(BaseModel):
     title: str = Field(default="New conversation", max_length=100)
+    collection_id: str | None = None
 
 
 class ConversationRename(BaseModel):
     title: str = Field(min_length=1, max_length=100)
+
+
+class ConversationCollectionUpdate(BaseModel):
+    collection_id: str | None = None
 
 
 class ChatStreamRequest(BaseModel):
@@ -53,6 +58,10 @@ class ChatStreamRequest(BaseModel):
     request_id: str | None = Field(default=None, max_length=100)
     regenerate: bool = False
     use_memory: bool = True
+    # Only used when this request lazily creates a brand-new conversation
+    # (no conversation_id given); an existing conversation's own stored
+    # collection_id is always authoritative (see PATCH .../collection).
+    collection_id: str | None = None
 
 
 class StopRequest(BaseModel):
@@ -212,7 +221,28 @@ def create_chat_router(
 
     @router.post("/conversations", status_code=201, response_model=ConversationOut)
     def create_conversation(payload: ConversationCreate, user=Depends(require_user)):
-        return conversations.create(user.id, payload.title).to_dict()
+        collection_id = payload.collection_id or ""
+        if collection_id and (
+            services.collections is None or services.collections.get(user.id, collection_id) is None
+        ):
+            raise HTTPException(status_code=404, detail="Collection not found.")
+        return conversations.create(user.id, payload.title, collection_id).to_dict()
+
+    @router.patch("/conversations/{conversation_id}/collection", response_model=ConversationOut)
+    def set_conversation_collection(
+        conversation_id: str, payload: ConversationCollectionUpdate, user=Depends(require_user)
+    ):
+        """Scope (or unscope) this conversation's retrieval to one knowledge-
+        base collection (Phase 67)."""
+        collection_id = payload.collection_id or ""
+        if collection_id and (
+            services.collections is None or services.collections.get(user.id, collection_id) is None
+        ):
+            raise HTTPException(status_code=404, detail="Collection not found.")
+        try:
+            return conversations.set_collection(user.id, conversation_id, collection_id).to_dict()
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Conversation not found.") from error
 
     @router.get("/conversations/{conversation_id}", response_model=ConversationDetailOut)
     def get_conversation(conversation_id: str, user=Depends(require_user)):
@@ -282,7 +312,21 @@ def create_chat_router(
         if payload.conversation_id and conversation is None:
             raise HTTPException(status_code=404, detail="Conversation not found.")
         if conversation is None:
-            conversation = conversations.create(user.id)
+            new_collection_id = payload.collection_id or ""
+            if new_collection_id and (
+                services.collections is None
+                or services.collections.get(user.id, new_collection_id) is None
+            ):
+                raise HTTPException(status_code=404, detail="Collection not found.")
+            conversation = conversations.create(user.id, collection_id=new_collection_id)
+
+        # Phase 67: a conversation scoped to a knowledge-base collection
+        # restricts retrieval to that collection's documents only.
+        document_ids = (
+            services.ingestion.document_ids_for_collection(user.id, conversation.collection_id)
+            if conversation.collection_id and services.ingestion is not None
+            else None
+        )
 
         pending_user = None
         if payload.regenerate:
@@ -348,7 +392,9 @@ def create_chat_router(
                     exclude_user_message_id=pending_user.id,
                 )
                 engine = _engine_for_conversation(services, memory, user.id)
-                iterator = engine.ask_stream(question, use_memory=payload.use_memory)
+                iterator = engine.ask_stream(
+                    question, use_memory=payload.use_memory, document_ids=document_ids
+                )
                 for engine_event in iterator:
                     if stop_event.is_set():
                         if hasattr(iterator, "close"):

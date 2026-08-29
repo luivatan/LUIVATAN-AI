@@ -49,6 +49,9 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   model, with SOURCE / PAGE or PAGE RANGE / SECTION headers and a source viewer in the UI.
 - **Duplicate protection** — SHA-256 document IDs; re-uploading the same file is
   detected and skipped (or force re-indexed).
+- **Document collections** (Phase 66/67) — group documents into named knowledge bases and
+  scope a conversation's retrieval to one of them; moving a document between collections
+  is a registry update only, never a re-embed.
 - **Bounded conversation context** — newest complete turns are selected under configurable
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.
@@ -211,13 +214,16 @@ storage-boundary safety policy in
 |---|---|
 | `POST /chat/stream` | genuine `RagEngine.ask_stream()` events as NDJSON |
 | `POST /chat/stop` | cooperative cancellation at the next provider token |
-| `GET/POST /conversations` | history/search and New Chat records |
+| `GET/POST /conversations` | history/search and New Chat records; `POST` accepts an optional `collection_id` to scope retrieval (Phase 67) |
 | `GET/PATCH/DELETE /conversations/{id}` | load, rename, or delete a conversation |
+| `PATCH /conversations/{id}/collection` | change (or clear) which knowledge-base collection a conversation is scoped to |
 | `GET /memory/candidates` | safe pending suggestions awaiting a user decision |
 | `POST /memory/candidates/{id}/approve` or `/reject` | explicit confirmation decision |
-| `POST /documents/upload` | bounded multipart upload into existing ingestion |
+| `POST /documents/upload` | bounded multipart upload into existing ingestion; accepts an optional `collection_id` form field |
 | `GET/DELETE /documents/{id}` | knowledge-base display/removal |
+| `PATCH /documents/{id}/collection` | move a document into (or out of) a collection — a registry update only, no re-embedding |
 | `POST /documents/{id}/reindex` | rerun existing extraction/chunk/embed pipeline |
+| `GET/POST /collections`, `PATCH/DELETE /collections/{id}` | named document-collection CRUD (Phase 66) |
 | `GET /models`, `POST /models/select` | existing model manager |
 | `GET /app-config` | non-secret runtime status for Settings |
 
@@ -286,6 +292,7 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_CONVERSATION_DB_PATH` | `data/conversations.db` | persistent conversation/history database |
 | `APEX_LONG_TERM_MEMORY_DB_PATH` | `data/long_term_memory.db` | separate explicit preference/context store; see `APEX_MEMORY_PROMPT_USE` |
 | `APEX_USERS_DB_PATH` | `data/users.db` | accounts + sessions (Phase 51/52) |
+| `APEX_COLLECTIONS_DB_PATH` | `data/collections.db` | named document-collection labels (Phase 66) |
 | `APEX_SESSION_COOKIE_NAME` / `APEX_SESSION_TTL_DAYS` | `apex_session` / `30` | session cookie name and lifetime |
 | `APEX_AUTO_LOGIN_LOCAL` | `1` | `0` = require real sign-in for every request instead of the default-local-account fallback |
 | `APEX_MAX_UPLOAD_MB` | `50` | server-enforced size limit for each browser upload |
