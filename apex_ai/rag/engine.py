@@ -351,6 +351,13 @@ class RagEngine:
 
     # -- answer paths -----------------------------------------------------
 
+    def _generation_kwargs(self) -> dict[str, int | float]:
+        """Generation controls from the centralized environment-backed settings."""
+        return {
+            "max_tokens": self.settings.generation_max_tokens,
+            "temperature": self.settings.generation_temperature,
+        }
+
     def _insufficient(self, turn: PreparedTurn, reason: str | None = None) -> AnswerResult:
         reason = reason or turn.support_reason
         log.info(
@@ -502,7 +509,8 @@ class RagEngine:
             generation_started = time.perf_counter()
             try:
                 answer = self.llm.generate(
-                    messages=messages, max_tokens=768, temperature=0.2
+                    messages=messages,
+                    **self._generation_kwargs(),
                 )
             except Exception as error:
                 log.error("Debug generation failed: %s", error)
@@ -568,7 +576,7 @@ class RagEngine:
         )
         generation_started = time.perf_counter()
         try:
-            answer = self.llm.generate(messages=messages, max_tokens=768, temperature=0.2)
+            answer = self.llm.generate(messages=messages, **self._generation_kwargs())
         except Exception as error:
             log.error("Generation failed: %s", error)
             raise self._provider_failure(error) from error
@@ -612,7 +620,7 @@ class RagEngine:
         generation_started = time.perf_counter()
         parts: list[str] = []
         try:
-            for token in self.llm.stream(messages=messages, max_tokens=768, temperature=0.2):
+            for token in self.llm.stream(messages=messages, **self._generation_kwargs()):
                 parts.append(token)
                 yield {"type": "token", "text": token}
         except Exception as error:

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import sys
+from types import ModuleType, SimpleNamespace
+
 import pytest
 
 from apex_ai.config.settings import with_overrides
@@ -50,12 +53,103 @@ def test_ollama_provider_builds(settings):
     assert isinstance(provider, OllamaProvider)
 
 
+def test_http_providers_use_timeouts_in_offline_cache_mode(settings, monkeypatch):
+    from apex_ai.llm.ollama import OllamaProvider
+    from apex_ai.llm.openai_compat import OpenAICompatProvider
+
+    seen: list[tuple[float, float]] = []
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            if len(seen) == 1:
+                return {"message": {"content": "local answer"}}
+            return {"choices": [{"message": {"content": "compatible answer"}}]}
+
+    def fake_post(*args, **kwargs):
+        seen.append(kwargs["timeout"])
+        return Response()
+
+    monkeypatch.setattr("requests.post", fake_post)
+    configured = with_overrides(
+        settings,
+        offline=True,
+        openai_api_key="configured",
+        provider_connect_timeout_seconds=1.25,
+        provider_read_timeout_seconds=42.5,
+    )
+
+    assert OllamaProvider(configured).generate("hello") == "local answer"
+    assert OpenAICompatProvider(configured).generate("hello") == "compatible answer"
+    assert seen == [(1.25, 42.5), (1.25, 42.5)]
+
+
+def test_transformers_offline_mode_loads_model_and_tokenizer_from_cache_only(
+    settings, monkeypatch
+):
+    from apex_ai.llm.transformers_local import TransformersProvider
+
+    calls: list[tuple[str, str, bool]] = []
+
+    class AutoTokenizer:
+        @classmethod
+        def from_pretrained(cls, model_id, *, local_files_only):
+            calls.append(("tokenizer", model_id, local_files_only))
+            return object()
+
+    class AutoModelForCausalLM:
+        @classmethod
+        def from_pretrained(cls, model_id, *, local_files_only):
+            calls.append(("model", model_id, local_files_only))
+            return object()
+
+    transformers = ModuleType("transformers")
+    transformers.AutoTokenizer = AutoTokenizer
+    transformers.AutoModelForCausalLM = AutoModelForCausalLM
+    transformers.pipeline = lambda *args, **kwargs: SimpleNamespace(
+        tokenizer=kwargs["tokenizer"]
+    )
+    torch = ModuleType("torch")
+    torch.cuda = SimpleNamespace(is_available=lambda: False)
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+    monkeypatch.setitem(sys.modules, "torch", torch)
+
+    configured = with_overrides(
+        settings,
+        hf_model_path="cached-test-model",
+        offline=True,
+    )
+    TransformersProvider(configured)._ensure_pipeline()
+
+    assert calls == [
+        ("tokenizer", "cached-test-model", True),
+        ("model", "cached-test-model", True),
+    ]
+
+
 def test_openai_provider_requires_key(settings):
     from apex_ai.llm.openai_compat import OpenAICompatProvider
 
     provider = OpenAICompatProvider(with_overrides(settings, openai_api_key=""))
     with pytest.raises(ConfigurationError):
         provider.validate()
+
+
+def test_provider_cache_tracks_api_key_without_retaining_plaintext(settings):
+    from apex_ai.llm.registry import _cache_key
+
+    first_secret = "alpha"
+    second_secret = "beta"
+    first = _cache_key(with_overrides(settings, openai_api_key=first_secret))
+    second = _cache_key(with_overrides(settings, openai_api_key=second_secret))
+
+    assert first != second
+    assert first_secret not in repr(first)
+    assert second_secret not in repr(second)
 
 
 def test_ollama_unreachable_gives_provider_error(settings, monkeypatch):

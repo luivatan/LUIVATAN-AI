@@ -29,6 +29,10 @@ class OpenAICompatProvider(LLMProvider):
         self.base_url = settings.openai_api_base.rstrip("/")
         self.api_key = settings.openai_api_key
         self.model = settings.openai_model
+        self.timeout = (
+            settings.provider_connect_timeout_seconds,
+            settings.provider_read_timeout_seconds,
+        )
 
     def validate(self) -> None:
         if not self.api_key:
@@ -65,7 +69,7 @@ class OpenAICompatProvider(LLMProvider):
                 f"{self.base_url}/chat/completions",
                 headers=self._headers(),
                 json=self._payload(prompt, messages, max_tokens, temperature, stop, False),
-                timeout=(5, 300),
+                timeout=self.timeout,
             )
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"].strip()
@@ -91,7 +95,7 @@ class OpenAICompatProvider(LLMProvider):
                 headers=self._headers(),
                 json=self._payload(prompt, messages, max_tokens, temperature, stop, True),
                 stream=True,
-                timeout=(5, 300),
+                timeout=self.timeout,
             )
             response.raise_for_status()
             for raw_line in response.iter_lines(decode_unicode=True):

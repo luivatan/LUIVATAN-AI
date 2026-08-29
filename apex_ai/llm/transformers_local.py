@@ -27,8 +27,8 @@ class TransformersProvider(LLMProvider):
         if self._pipeline is not None:
             return self._pipeline
         try:
-            from transformers import pipeline
-        except ModuleNotFoundError as error:
+            from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+        except ImportError as error:
             raise ProviderError(
                 what="The `transformers` package is not installed.",
                 why="The transformers provider needs the transformers + torch packages.",
@@ -39,19 +39,41 @@ class TransformersProvider(LLMProvider):
             with timed(log, f"loading transformers model {self.model_id}"):
                 import torch
 
+                # Load both artifacts explicitly so APEX_OFFLINE is enforced at
+                # every Hugging Face boundary instead of relying on pipeline's
+                # version-dependent forwarding of model/tokenizer kwargs.
+                cache_only = self.settings.offline
+                tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_id,
+                    local_files_only=cache_only,
+                )
+                model = AutoModelForCausalLM.from_pretrained(
+                    self.model_id,
+                    local_files_only=cache_only,
+                )
                 device = 0 if torch.cuda.is_available() else -1  # graceful CPU fallback
                 self._pipeline = pipeline(
                     "text-generation",
-                    model=self.model_id,
+                    model=model,
+                    tokenizer=tokenizer,
                     device=device,
                 )
         except Exception as error:
             self._pipeline = None
+            if self.settings.offline:
+                fix = (
+                    "APEX_OFFLINE=1 forbids model downloads. Pre-cache both the model "
+                    "and tokenizer, choose a cached model, or use a local GGUF model."
+                )
+            else:
+                fix = (
+                    "Check the model id/path or pre-download it. GGUF models with the "
+                    "llama_cpp provider are recommended for offline use."
+                )
             raise ProviderError(
                 what=f"Could not load the transformers model '{self.model_id}'.",
                 why=str(error),
-                fix="Check the model id/path, or pre-download it. For offline use, "
-                    "GGUF models with the llama_cpp provider are recommended.",
+                fix=fix,
             ) from error
         return self._pipeline
 

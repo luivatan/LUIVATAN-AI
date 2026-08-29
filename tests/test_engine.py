@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from apex_ai.config.settings import with_overrides
 from apex_ai.core.types import RetrievedChunk
 from apex_ai.rag.context_builder import build_context
 from apex_ai.rag.engine import RagEngine
@@ -106,6 +107,48 @@ def test_streaming_engine_emits_tokens_then_final(engine):
     assert types[-1] == "final"
     final = events[-1]["result"]
     assert final.citations
+
+
+def test_answer_paths_use_configured_generation_controls(engine):
+    calls: list[tuple[str, int, float]] = []
+    answer = "The retrieved evidence says fever is 38 C or higher. [1]"
+
+    class RecordingLLM(FakeLLM):
+        def generate(
+            self,
+            prompt=None,
+            *,
+            messages=None,
+            max_tokens=512,
+            temperature=0.2,
+            stop=None,
+        ):
+            calls.append(("generate", max_tokens, temperature))
+            return answer
+
+        def stream(
+            self,
+            prompt=None,
+            *,
+            messages=None,
+            max_tokens=512,
+            temperature=0.2,
+            stop=None,
+        ):
+            calls.append(("stream", max_tokens, temperature))
+            yield answer
+
+    engine.settings = with_overrides(
+        engine.settings,
+        generation_max_tokens=321,
+        generation_temperature=0.7,
+    )
+    engine.llm = RecordingLLM()
+
+    engine.ask("What temperature counts as a fever in adults?")
+    list(engine.ask_stream("What temperature counts as a fever in adults?"))
+
+    assert calls == [("generate", 321, 0.7), ("stream", 321, 0.7)]
 
 
 def test_memory_updated_after_answer(engine):

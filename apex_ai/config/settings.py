@@ -14,6 +14,7 @@ Design notes
 
 from __future__ import annotations
 
+import math
 import os
 import warnings
 from dataclasses import dataclass, field, replace
@@ -89,9 +90,16 @@ class Settings:
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5-coder:7b"
     openai_api_base: str = "https://api.openai.com/v1"
-    openai_api_key: str = ""  # secret: env/.env only, never committed
+    # Secret: env/.env only; never committed or included in Settings repr.
+    openai_api_key: str = field(
+        default="",
+        repr=False,
+        metadata={"secret": True},
+    )
     openai_model: str = "gpt-4.1-mini"
     hf_model_path: str = "Qwen/Qwen2.5-0.5B-Instruct"
+    provider_connect_timeout_seconds: float = 5.0
+    provider_read_timeout_seconds: float = 300.0
 
     # --- chunking -------------------------------------------------------
     chunk_size: int = 1000
@@ -120,6 +128,8 @@ class Settings:
     # --- context / generation --------------------------------------------
     context_char_limit: int = 6000
     context_token_reserve: int = 1024
+    generation_max_tokens: int = 768
+    generation_temperature: float = 0.2
     memory_turns: int = 8  # retained/retrieved turns; not all are sent to the model
     history_turns: int = 3  # newest complete turns eligible for one prompt
     history_char_limit: int = 2400  # strict total conversation-context budget
@@ -130,7 +140,9 @@ class Settings:
     rag_debug: bool = False  # gated developer endpoint; never in normal chat payloads
 
     # --- server ------------------------------------------------------------
-    server_name: str = "0.0.0.0"
+    # Loopback is the safe default while inbound authentication is absent.
+    # Explicit deployments can opt into a wider bind with APEX_SERVER_NAME.
+    server_name: str = "127.0.0.1"
     server_port: int = 7860
 
 
@@ -146,6 +158,38 @@ def _float(raw: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
+
+def _bounded_int(
+    raw: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int | None = None,
+) -> int:
+    """Parse an integer and fail safely to ``default`` outside its valid range."""
+    value = _int(raw, default)
+    if value < minimum or (maximum is not None and value > maximum):
+        return default
+    return value
+
+
+def _bounded_float(
+    raw: str,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float | None = None,
+) -> float:
+    """Parse a finite float and fail safely to ``default`` when invalid."""
+    value = _float(raw, default)
+    if (
+        not math.isfinite(value)
+        or value < minimum
+        or (maximum is not None and value > maximum)
+    ):
+        return default
+    return value
 
 
 def _bool(raw: str, default: bool) -> bool:
@@ -190,17 +234,44 @@ def load_settings() -> Settings:
             )
         ),
         embedding_model=_env("APEX_EMBEDDING_MODEL", default="all-MiniLM-L6-v2"),
-        embedding_batch_size=_int(_env("APEX_EMBEDDING_BATCH_SIZE", default="32"), 32),
+        embedding_batch_size=_bounded_int(
+            _env("APEX_EMBEDDING_BATCH_SIZE", default="32"),
+            32,
+            minimum=1,
+            maximum=4096,
+        ),
         llm_provider=_env("APEX_LLM_PROVIDER", "LLM_PROVIDER", default="llama_cpp").lower(),
-        llm_context_size=_int(_env("APEX_LLM_CONTEXT_SIZE", "LLM_CONTEXT_SIZE", default="4096"), 4096),
+        llm_context_size=_bounded_int(
+            _env("APEX_LLM_CONTEXT_SIZE", "LLM_CONTEXT_SIZE", default="4096"),
+            4096,
+            minimum=256,
+            maximum=1_048_576,
+        ),
         n_gpu_layers=_int(_env("APEX_N_GPU_LAYERS", default="0"), 0),
-        n_threads=_int(_env("APEX_N_THREADS", default="0"), 0),
+        n_threads=_bounded_int(
+            _env("APEX_N_THREADS", default="0"),
+            0,
+            minimum=0,
+            maximum=4096,
+        ),
         ollama_url=_env("APEX_OLLAMA_URL", "OLLAMA_URL", default="http://127.0.0.1:11434"),
         ollama_model=_env("APEX_OLLAMA_MODEL", "OLLAMA_MODEL", default="qwen2.5-coder:7b"),
         openai_api_base=_env("APEX_OPENAI_API_BASE", "OPENAI_API_BASE", default="https://api.openai.com/v1"),
         openai_api_key=_env("APEX_OPENAI_API_KEY", "OPENAI_API_KEY", default=""),
         openai_model=_env("APEX_OPENAI_MODEL", "OPENAI_MODEL", default="gpt-4.1-mini"),
         hf_model_path=_env("APEX_HF_MODEL_PATH", "HF_MODEL_PATH", default="Qwen/Qwen2.5-0.5B-Instruct"),
+        provider_connect_timeout_seconds=_bounded_float(
+            _env("APEX_PROVIDER_CONNECT_TIMEOUT_SECONDS", default="5"),
+            5.0,
+            minimum=0.1,
+            maximum=3600.0,
+        ),
+        provider_read_timeout_seconds=_bounded_float(
+            _env("APEX_PROVIDER_READ_TIMEOUT_SECONDS", default="300"),
+            300.0,
+            minimum=0.1,
+            maximum=86_400.0,
+        ),
         chunk_size=_int(_env("APEX_CHUNK_SIZE", default="1000"), 1000),
         chunk_overlap=_int(_env("APEX_CHUNK_OVERLAP", default="150"), 150),
         min_chunk_size=_int(_env("APEX_MIN_CHUNK_SIZE", default="200"), 200),
@@ -235,6 +306,18 @@ def load_settings() -> Settings:
         context_token_reserve=max(
             128, _int(_env("APEX_CONTEXT_TOKEN_RESERVE", default="1024"), 1024)
         ),
+        generation_max_tokens=_bounded_int(
+            _env("APEX_GENERATION_MAX_TOKENS", default="768"),
+            768,
+            minimum=1,
+            maximum=131_072,
+        ),
+        generation_temperature=_bounded_float(
+            _env("APEX_GENERATION_TEMPERATURE", default="0.2"),
+            0.2,
+            minimum=0.0,
+            maximum=2.0,
+        ),
         memory_turns=max(1, _int(_env("APEX_MEMORY_TURNS", default="8"), 8)),
         history_turns=max(0, _int(_env("APEX_HISTORY_TURNS", default="3"), 3)),
         history_char_limit=max(
@@ -249,8 +332,13 @@ def load_settings() -> Settings:
         ),
         max_upload_mb=max(1, _int(_env("APEX_MAX_UPLOAD_MB", default="50"), 50)),
         rag_debug=_bool(_env("APEX_RAG_DEBUG", default=""), False),
-        server_name=_env("APEX_SERVER_NAME", default="0.0.0.0"),
-        server_port=_int(_env("APEX_SERVER_PORT", default="7860"), 7860),
+        server_name=_env("APEX_SERVER_NAME", default="127.0.0.1"),
+        server_port=_bounded_int(
+            _env("APEX_SERVER_PORT", default="7860"),
+            7860,
+            minimum=1,
+            maximum=65_535,
+        ),
     )
 
 

@@ -26,6 +26,10 @@ class OllamaProvider(LLMProvider):
         self.settings = settings
         self.base_url = settings.ollama_url.rstrip("/")
         self.model = settings.ollama_model
+        self.timeout = (
+            settings.provider_connect_timeout_seconds,
+            settings.provider_read_timeout_seconds,
+        )
 
     def _post(self, payload: dict, stream: bool = False):
         try:
@@ -33,7 +37,7 @@ class OllamaProvider(LLMProvider):
                 f"{self.base_url}/api/chat",
                 json=payload,
                 stream=stream,
-                timeout=(5, 300),
+                timeout=self.timeout,
             )
         except requests.ConnectionError as error:
             raise ProviderError(
@@ -45,8 +49,14 @@ class OllamaProvider(LLMProvider):
         except requests.Timeout as error:
             raise ProviderError(
                 what="Ollama took too long to respond.",
-                why="The request timed out after 300 seconds.",
-                fix="Try a smaller model, or increase max tokens gradually.",
+                why=(
+                    "The request exceeded the configured provider timeout "
+                    f"({self.timeout[1]:g} seconds)."
+                ),
+                fix=(
+                    "Try a smaller model, reduce generation length, or adjust "
+                    "APEX_PROVIDER_READ_TIMEOUT_SECONDS deliberately."
+                ),
             ) from error
 
     def _messages(self, prompt, messages) -> list[dict]:

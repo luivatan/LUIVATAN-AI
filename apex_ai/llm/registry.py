@@ -10,6 +10,8 @@ never loaded twice; switching models (UI) replaces the cache entry.
 
 from __future__ import annotations
 
+import hashlib
+
 from apex_ai.core.errors import ConfigurationError
 from apex_ai.core.logging import get_logger
 from apex_ai.llm.base import LLMProvider, ModelInfo
@@ -68,6 +70,13 @@ _active: LLMProvider | None = None
 _active_key: tuple | None = None
 
 
+def _secret_fingerprint(value: str) -> str:
+    """Represent secret configuration in cache identity without retaining plaintext."""
+    if not value:
+        return ""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def _cache_key(settings) -> tuple:
     return (
         settings.llm_provider,
@@ -77,8 +86,12 @@ def _cache_key(settings) -> tuple:
         settings.ollama_url,
         settings.ollama_model,
         settings.openai_api_base,
+        _secret_fingerprint(settings.openai_api_key),
         settings.openai_model,
         settings.hf_model_path,
+        settings.offline,
+        settings.provider_connect_timeout_seconds,
+        settings.provider_read_timeout_seconds,
     )
 
 
