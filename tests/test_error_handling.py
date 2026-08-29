@@ -224,6 +224,9 @@ class _ExplodingLLM:
 
 def test_streaming_errors_use_the_same_safe_problem_shape(settings, embeddings, store):
     from apex_ai.api.server import create_api
+    from apex_ai.auth.service import AuthService
+    from apex_ai.auth.sessions import SessionStore
+    from apex_ai.auth.users import UserStore
     from apex_ai.documents.service import IngestionService
     from apex_ai.memory.conversation import ConversationMemory
     from apex_ai.memory.conversations import ConversationStore
@@ -241,6 +244,12 @@ def test_streaming_errors_use_the_same_safe_problem_shape(settings, embeddings, 
     memory = ConversationMemory(settings.memory_path, settings.memory_turns)
     reranker = LexicalReranker()
     query_processor = QueryProcessor(enabled=False)
+    auth = AuthService(
+        UserStore(settings.users_db_path),
+        SessionStore(settings.users_db_path),
+        session_ttl_days=settings.session_ttl_days,
+    )
+    default_local_user = auth.ensure_default_local_account()
     engine = RagEngine(
         settings=settings,
         store=store,
@@ -249,6 +258,7 @@ def test_streaming_errors_use_the_same_safe_problem_shape(settings, embeddings, 
         memory=memory,
         llm_provider=_ExplodingLLM(),
         query_processor=query_processor,
+        user_id=default_local_user.id,
     )
     services = ApexServices(
         settings=settings,
@@ -261,6 +271,8 @@ def test_streaming_errors_use_the_same_safe_problem_shape(settings, embeddings, 
         query_processor=query_processor,
         engine=engine,
         models=ModelManager(settings),
+        auth=auth,
+        default_local_user=default_local_user,
     )
     client = TestClient(
         create_api(

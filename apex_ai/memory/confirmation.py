@@ -20,19 +20,20 @@ class MemoryConfirmationService:
         self.extractor = extractor
         self.store = store
 
-    def find_conflict(self, candidate: PendingMemory) -> LongTermMemory | None:
+    def find_conflict(self, user_id: str, candidate: PendingMemory) -> LongTermMemory | None:
         """Phase 49: an existing confirmed memory of the same kind this
         candidate looks like it may be updating or contradicting. Detection
         only — approving still just adds the new memory; nothing is deleted
         or overwritten automatically. Resolving a real conflict (deleting the
         stale one) is the existing Phase 46 memory-management UI's job."""
-        existing = self.store.list(kind=candidate.kind)
+        existing = self.store.list(user_id, kind=candidate.kind)
         return find_similar_memory(candidate.content, existing)
 
-    def propose_from_user_message(self, user_message: str) -> list[PendingMemory]:
+    def propose_from_user_message(self, user_id: str, user_message: str) -> list[PendingMemory]:
         proposals: list[PendingMemory] = []
         for candidate in self.extractor.extract(user_message):
             proposal = self.store.propose_candidate(
+                user_id,
                 candidate.id,
                 content=candidate.content,
                 kind=candidate.kind,
@@ -42,14 +43,14 @@ class MemoryConfirmationService:
                 proposals.append(proposal)
         return proposals
 
-    def pending(self) -> list[PendingMemory]:
-        return self.store.pending()
+    def pending(self, user_id: str) -> list[PendingMemory]:
+        return self.store.pending(user_id)
 
-    def approve(self, proposal_id: str) -> LongTermMemory:
-        return self.store.approve_candidate(proposal_id)
+    def approve(self, user_id: str, proposal_id: str) -> LongTermMemory:
+        return self.store.approve_candidate(user_id, proposal_id)
 
-    def reject(self, proposal_id: str) -> bool:
-        return self.store.reject_candidate(proposal_id)
+    def reject(self, user_id: str, proposal_id: str) -> bool:
+        return self.store.reject_candidate(user_id, proposal_id)
 
 
 __all__ = ["MemoryConfirmationService"]

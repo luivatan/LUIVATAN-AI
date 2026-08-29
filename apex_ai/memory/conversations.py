@@ -3,6 +3,15 @@
 This store is deliberately separate from document evidence. It supplies recent turns
 only as conversational context; the RAG engine still retrieves every factual source
 from ChromaDB and citations still come only from chunks sent to the model.
+
+Phase 55: every conversation belongs to exactly one account (``user_id``). Every
+method that reads or writes conversation/message data takes the caller's
+``user_id`` and filters or checks ownership against it — not only the top-level
+``get``/``list``/``delete``, so a future call site can't accidentally bypass
+isolation by reaching for a message-level method directly. A missing or mismatched
+owner is treated the same as "does not exist" (``None``/``KeyError``/no rows
+affected), never a distinct "forbidden" signal — the API layer must not let a
+caller learn that a conversation exists at all if it isn't theirs.
 """
 
 from __future__ import annotations
@@ -76,7 +85,7 @@ class Message:
 
 
 class ConversationStore:
-    """SQLite-backed conversation repository for the local single-user app."""
+    """SQLite-backed, per-account conversation repository."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -146,39 +155,70 @@ class ConversationStore:
                     "ALTER TABLE conversations ADD COLUMN "
                     "summarized_message_count INTEGER NOT NULL DEFAULT 0"
                 )
+            # Phase 55: ownership. Empty string (not NULL) is the "not yet
+            # backfilled" marker for a pre-existing single-tenant database;
+            # backfill_owner() assigns those rows to a real account.
+            if "user_id" not in conversation_columns:
+                connection.execute(
+                    "ALTER TABLE conversations ADD COLUMN user_id TEXT NOT NULL DEFAULT ''"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_conversations_user "
+                    "ON conversations(user_id, updated_at DESC)"
+                )
 
-    def create(self, title: str = "New conversation") -> Conversation:
+    def backfill_owner(self, user_id: str) -> int:
+        """Phase 55: assign every not-yet-owned conversation (from before this
+        phase, or any future never-owned row) to ``user_id``. Idempotent — a
+        conversation that already has an owner is left untouched. Intended to
+        run once at startup against the default local account, exactly the
+        "existing data keeps working" precedent Phase 17/46/50 already set for
+        additive schema changes."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE conversations SET user_id=? WHERE user_id=''", (user_id,)
+            )
+            return cursor.rowcount
+
+    def create(self, user_id: str, title: str = "New conversation") -> Conversation:
         conversation_id = str(uuid.uuid4())
         now = _now()
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO conversations(id,title,created_at,updated_at) VALUES (?,?,?,?)",
-                (conversation_id, title.strip()[:100] or "New conversation", now, now),
+                "INSERT INTO conversations(id,user_id,title,created_at,updated_at) VALUES (?,?,?,?,?)",
+                (conversation_id, user_id, title.strip()[:100] or "New conversation", now, now),
             )
         return Conversation(conversation_id, title, now, now)
 
-    def get(self, conversation_id: str) -> Conversation | None:
+    def get(self, user_id: str, conversation_id: str) -> Conversation | None:
         with self._connect() as connection:
             row = connection.execute(
                 """SELECT c.*,(SELECT COUNT(*) FROM messages m
                    WHERE m.conversation_id=c.id) AS message_count
-                   FROM conversations c WHERE c.id=?""",
-                (conversation_id,),
+                   FROM conversations c WHERE c.id=? AND c.user_id=?""",
+                (conversation_id, user_id),
             ).fetchone()
         return self._conversation(row)
 
-    def list(self, search: str = "", limit: int = 100) -> list[Conversation]:
+    def _owns(self, connection: sqlite3.Connection, user_id: str, conversation_id: str) -> bool:
+        row = connection.execute(
+            "SELECT 1 FROM conversations WHERE id=? AND user_id=?",
+            (conversation_id, user_id),
+        ).fetchone()
+        return row is not None
+
+    def list(self, user_id: str, search: str = "", limit: int = 100) -> list[Conversation]:
         limit = max(1, min(int(limit), 200))
         term = search.strip()
-        params: list[Any] = []
-        where = ""
+        params: list[Any] = [user_id]
+        where = "WHERE c.user_id=?"
         if term:
             escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             like = f"%{escaped}%"
-            where = (
-                "WHERE c.title LIKE ? ESCAPE '\\' OR EXISTS "
+            where += (
+                " AND (c.title LIKE ? ESCAPE '\\' OR EXISTS "
                 "(SELECT 1 FROM messages sm WHERE sm.conversation_id=c.id "
-                "AND sm.content LIKE ? ESCAPE '\\')"
+                "AND sm.content LIKE ? ESCAPE '\\'))"
             )
             params.extend([like, like])
         params.append(limit)
@@ -196,59 +236,70 @@ class ConversationStore:
             ).fetchall()
         return [self._conversation(row) for row in rows]
 
-    def rename(self, conversation_id: str, title: str) -> Conversation:
+    def rename(self, user_id: str, conversation_id: str, title: str) -> Conversation:
         clean = " ".join(title.strip().split())[:100]
         if not clean:
             raise ValueError("Conversation title cannot be empty")
         with self._connect() as connection:
             cursor = connection.execute(
-                "UPDATE conversations SET title=?,updated_at=? WHERE id=?",
-                (clean, _now(), conversation_id),
+                "UPDATE conversations SET title=?,updated_at=? WHERE id=? AND user_id=?",
+                (clean, _now(), conversation_id, user_id),
             )
             if cursor.rowcount == 0:
                 raise KeyError(conversation_id)
-        result = self.get(conversation_id)
+        result = self.get(user_id, conversation_id)
         assert result is not None
         return result
 
-    def delete(self, conversation_id: str) -> bool:
+    def delete(self, user_id: str, conversation_id: str) -> bool:
         with self._connect() as connection:
-            cursor = connection.execute("DELETE FROM conversations WHERE id=?", (conversation_id,))
+            cursor = connection.execute(
+                "DELETE FROM conversations WHERE id=? AND user_id=?", (conversation_id, user_id)
+            )
             return cursor.rowcount > 0
 
-    def clear(self) -> int:
+    def clear(self, user_id: str) -> int:
+        """Deletes only ``user_id``'s own conversations."""
         with self._connect() as connection:
-            count = int(connection.execute("SELECT COUNT(*) FROM conversations").fetchone()[0])
-            connection.execute("DELETE FROM conversations")
+            count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM conversations WHERE user_id=?", (user_id,)
+                ).fetchone()[0]
+            )
+            connection.execute("DELETE FROM conversations WHERE user_id=?", (user_id,))
             return count
 
-    def summary_state(self, conversation_id: str) -> tuple[str, int]:
-        """Phase 50: the conversation's rolling summary and how many messages
-        (oldest-first) it already covers. ``("", 0)`` for an unknown or
-        never-summarized conversation."""
+    def summary_state(self, user_id: str, conversation_id: str) -> tuple[str, int]:
+        """Phase 50/55: the conversation's rolling summary and how many messages
+        (oldest-first) it already covers. ``("", 0)`` for an unknown, not-owned,
+        or never-summarized conversation."""
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT summary,summarized_message_count FROM conversations WHERE id=?",
-                (conversation_id,),
+                "SELECT summary,summarized_message_count FROM conversations WHERE id=? AND user_id=?",
+                (conversation_id, user_id),
             ).fetchone()
         if row is None:
             return "", 0
         return row["summary"] or "", int(row["summarized_message_count"] or 0)
 
     def update_summary(
-        self, conversation_id: str, summary: str, summarized_message_count: int
+        self, user_id: str, conversation_id: str, summary: str, summarized_message_count: int
     ) -> None:
-        """Phase 50: persist a regenerated rolling summary. Does not touch
+        """Phase 50/55: persist a regenerated rolling summary. Does not touch
         ``updated_at`` — this is prompt-construction bookkeeping, not a change
-        a user made, and must not reorder the conversation list."""
+        a user made, and must not reorder the conversation list. A no-op if
+        ``conversation_id`` isn't owned by ``user_id``."""
         with self._connect() as connection:
             connection.execute(
-                "UPDATE conversations SET summary=?,summarized_message_count=? WHERE id=?",
-                (summary, max(0, int(summarized_message_count)), conversation_id),
+                "UPDATE conversations SET summary=?,summarized_message_count=? "
+                "WHERE id=? AND user_id=?",
+                (summary, max(0, int(summarized_message_count)), conversation_id, user_id),
             )
 
-    def messages(self, conversation_id: str) -> list[Message]:
+    def messages(self, user_id: str, conversation_id: str) -> list[Message]:
         with self._connect() as connection:
+            if not self._owns(connection, user_id, conversation_id):
+                return []
             rows = connection.execute(
                 "SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at,id",
                 (conversation_id,),
@@ -257,6 +308,7 @@ class ConversationStore:
 
     def add_message(
         self,
+        user_id: str,
         conversation_id: str,
         role: str,
         content: str,
@@ -272,7 +324,8 @@ class ConversationStore:
         now = _now()
         with self._connect() as connection:
             existing = connection.execute(
-                "SELECT title FROM conversations WHERE id=?", (conversation_id,)
+                "SELECT title FROM conversations WHERE id=? AND user_id=?",
+                (conversation_id, user_id),
             ).fetchone()
             if existing is None:
                 raise KeyError(conversation_id)
@@ -302,13 +355,15 @@ class ConversationStore:
         )
 
     def set_feedback(
-        self, conversation_id: str, message_id: str, feedback: str | None
+        self, user_id: str, conversation_id: str, message_id: str, feedback: str | None
     ) -> Message:
         """Set (or clear, with ``None``) a user's up/down reaction to one assistant
         message. Local, per-user signal only — not aggregated or sent anywhere."""
         if feedback not in {"up", "down", None}:
             raise ValueError("feedback must be 'up', 'down', or null")
         with self._connect() as connection:
+            if not self._owns(connection, user_id, conversation_id):
+                raise KeyError(message_id)
             cursor = connection.execute(
                 """UPDATE messages SET feedback=?
                    WHERE id=? AND conversation_id=? AND role='assistant'""",
@@ -321,8 +376,10 @@ class ConversationStore:
             ).fetchone()
         return self._message(row)
 
-    def last_user_message(self, conversation_id: str) -> Message | None:
+    def last_user_message(self, user_id: str, conversation_id: str) -> Message | None:
         with self._connect() as connection:
+            if not self._owns(connection, user_id, conversation_id):
+                return None
             row = connection.execute(
                 """SELECT * FROM messages WHERE conversation_id=? AND role='user'
                    ORDER BY created_at DESC,id DESC LIMIT 1""",
@@ -330,9 +387,11 @@ class ConversationStore:
             ).fetchone()
         return self._message(row) if row else None
 
-    def remove_answers_after(self, message: Message) -> int:
+    def remove_answers_after(self, user_id: str, message: Message) -> int:
         """Remove assistant output after a selected user message before regeneration."""
         with self._connect() as connection:
+            if not self._owns(connection, user_id, message.conversation_id):
+                return 0
             cursor = connection.execute(
                 """DELETE FROM messages WHERE conversation_id=? AND role='assistant'
                    AND created_at>=?""",
@@ -345,10 +404,15 @@ class ConversationStore:
             return cursor.rowcount
 
     def recent_turns(
-        self, conversation_id: str, limit: int, *, exclude_user_message_id: str | None = None
+        self,
+        user_id: str,
+        conversation_id: str,
+        limit: int,
+        *,
+        exclude_user_message_id: str | None = None,
     ) -> list[dict[str, str]]:
         """Return paired turns in the shape expected by RagEngine memory."""
-        messages = self.messages(conversation_id)
+        messages = self.messages(user_id, conversation_id)
         if exclude_user_message_id:
             messages = [message for message in messages if message.id != exclude_user_message_id]
         turns: list[dict[str, str]] = []
@@ -404,18 +468,21 @@ class ConversationMemoryAdapter:
     def __init__(
         self,
         store: ConversationStore,
+        user_id: str,
         conversation_id: str,
         limit: int,
         *,
         exclude_user_message_id: str | None = None,
     ) -> None:
         self.store = store
+        self.user_id = user_id
         self.conversation_id = conversation_id
         self.limit = limit
         self.exclude_user_message_id = exclude_user_message_id
 
     def recent(self, n: int | None = None) -> list[dict[str, str]]:
         return self.store.recent_turns(
+            self.user_id,
             self.conversation_id,
             n or self.limit,
             exclude_user_message_id=self.exclude_user_message_id,
@@ -432,5 +499,5 @@ class ConversationMemoryAdapter:
         (``getattr(..., "summary_text", None)``); implementing it here, and
         not on the legacy JSON ConversationMemory, scopes summarization to the
         SQLite-backed web chat this phase targets."""
-        summary, _ = self.store.summary_state(self.conversation_id)
+        summary, _ = self.store.summary_state(self.user_id, self.conversation_id)
         return summary

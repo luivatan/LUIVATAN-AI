@@ -10,6 +10,9 @@ from tests.conftest import DATA_DIR, FakeLLM
 @pytest.fixture()
 def wired_services(settings, ingestion, embeddings, store):
     """A services container wired to the fast fake stack."""
+    from apex_ai.auth.service import AuthService
+    from apex_ai.auth.sessions import SessionStore
+    from apex_ai.auth.users import UserStore
     from apex_ai.memory.conversation import ConversationMemory
     from apex_ai.models.manager import ModelManager
     from apex_ai.rag.engine import RagEngine
@@ -22,16 +25,24 @@ def wired_services(settings, ingestion, embeddings, store):
     ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
     retriever = HybridRetriever(store, settings, BM25Index(store))
     memory = ConversationMemory(settings.memory_path, settings.memory_turns)
+    auth = AuthService(
+        UserStore(settings.users_db_path),
+        SessionStore(settings.users_db_path),
+        session_ttl_days=settings.session_ttl_days,
+    )
+    default_local_user = auth.ensure_default_local_account()
     engine = RagEngine(
         settings=settings, store=store, retriever=retriever,
         reranker=LexicalReranker(), memory=memory, llm_provider=FakeLLM(),
         query_processor=QueryProcessor(enabled=False),
+        user_id=default_local_user.id,
     )
     return ApexServices(
         settings=settings, embeddings=embeddings, store=store, ingestion=ingestion,
         retriever=retriever, reranker=LexicalReranker(), memory=memory,
         query_processor=QueryProcessor(enabled=False), engine=engine,
         models=ModelManager(settings),
+        auth=auth, default_local_user=default_local_user,
     )
 
 
@@ -70,7 +81,9 @@ def test_health_reports_memory_availability_without_exposing_contents(
     wired_services.long_term_memory = LongTermMemoryStore(
         wired_services.settings.long_term_memory_db_path
     )
-    wired_services.long_term_memory.create(canary, kind="preference")
+    wired_services.long_term_memory.create(
+        wired_services.default_local_user.id, canary, kind="preference"
+    )
 
     response = api_client.get("/health")
     assert response.status_code == 200
@@ -161,14 +174,16 @@ def test_phase42_query_endpoint_does_not_trigger_memory_extraction(
     wired_services.long_term_memory = LongTermMemoryStore(
         wired_services.settings.long_term_memory_db_path
     )
-    wired_services.long_term_memory.create(private_memory, kind="preference")
+    wired_services.long_term_memory.create(
+        wired_services.default_local_user.id, private_memory, kind="preference"
+    )
 
     response = api_client.post(
         "/query", json={"question": "What temperature is a fever in adults?"}
     )
 
     assert response.status_code == 200
-    assert wired_services.long_term_memory.count() == 1
+    assert wired_services.long_term_memory.count(wired_services.default_local_user.id) == 1
 
 
 def test_phase47_preference_always_reaches_prompt_but_never_becomes_a_citation(
@@ -183,7 +198,9 @@ def test_phase47_preference_always_reaches_prompt_but_never_becomes_a_citation(
 
     private_preference = "PRIVATE-PREFERENCE-CANARY: prefers concise answers"
     long_term_memory = LongTermMemoryStore(wired_services.settings.long_term_memory_db_path)
-    long_term_memory.create(private_preference, kind="preference")
+    long_term_memory.create(
+        wired_services.default_local_user.id, private_preference, kind="preference"
+    )
 
     engine = RagEngine(
         settings=wired_services.settings,
@@ -194,6 +211,7 @@ def test_phase47_preference_always_reaches_prompt_but_never_becomes_a_citation(
         llm_provider=FakeLLM(),
         query_processor=wired_services.query_processor,
         long_term_memory=long_term_memory,
+        user_id=wired_services.default_local_user.id,
     )
 
     result = engine.ask("What temperature is a fever in adults?")
@@ -213,7 +231,9 @@ def test_phase47_unrelated_ongoing_context_is_filtered_out_by_relevance(wired_se
 
     unrelated_context = "PRIVATE-CONTEXT-CANARY: migrating a payroll spreadsheet to a new vendor"
     long_term_memory = LongTermMemoryStore(wired_services.settings.long_term_memory_db_path)
-    long_term_memory.create(unrelated_context, kind="ongoing_context")
+    long_term_memory.create(
+        wired_services.default_local_user.id, unrelated_context, kind="ongoing_context"
+    )
 
     engine = RagEngine(
         settings=wired_services.settings,
@@ -224,6 +244,7 @@ def test_phase47_unrelated_ongoing_context_is_filtered_out_by_relevance(wired_se
         llm_provider=FakeLLM(),
         query_processor=wired_services.query_processor,
         long_term_memory=long_term_memory,
+        user_id=wired_services.default_local_user.id,
     )
 
     engine.ask("What temperature is a fever in adults?")
@@ -238,7 +259,9 @@ def test_phase47_memory_prompt_use_setting_disables_injection(wired_services, se
 
     preference = "PRIVATE-DISABLED-CANARY: prefers concise answers"
     long_term_memory = LongTermMemoryStore(wired_services.settings.long_term_memory_db_path)
-    long_term_memory.create(preference, kind="preference")
+    long_term_memory.create(
+        wired_services.default_local_user.id, preference, kind="preference"
+    )
     disabled_settings = with_overrides(settings, memory_prompt_use=False)
 
     engine = RagEngine(
@@ -250,6 +273,7 @@ def test_phase47_memory_prompt_use_setting_disables_injection(wired_services, se
         llm_provider=FakeLLM(),
         query_processor=wired_services.query_processor,
         long_term_memory=long_term_memory,
+        user_id=wired_services.default_local_user.id,
     )
 
     engine.ask("What temperature is a fever in adults?")
@@ -273,7 +297,7 @@ def test_phase43_candidate_like_chat_is_not_automatically_persisted(
     response = api_client.post("/query", json={"question": question})
 
     assert response.status_code == 200
-    assert wired_services.long_term_memory.count() == 0
+    assert wired_services.long_term_memory.count(wired_services.default_local_user.id) == 0
 
 
 def test_ingest_endpoint(api_client, tmp_path):

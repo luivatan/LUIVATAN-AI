@@ -9,6 +9,9 @@ import pytest
 from apex_ai.core.errors import DatabaseError
 from apex_ai.memory.long_term import LongTermMemoryStore
 
+USER = "user-1"
+OTHER_USER = "user-2"
+
 
 def _table_names(path) -> set[str]:
     with sqlite3.connect(path) as connection:
@@ -22,16 +25,17 @@ def test_long_term_memory_crud_persists_across_store_instances(tmp_path):
     path = tmp_path / "long-term.db"
     store = LongTermMemoryStore(path)
 
-    created = store.create("Prefer concise answers.", kind="preference")
+    created = store.create(USER, "Prefer concise answers.", kind="preference")
     assert created.content == "Prefer concise answers."
     assert created.kind == "preference"
     assert created.created_at == created.updated_at
-    assert store.count() == 1
+    assert store.count(USER) == 1
 
     reopened = LongTermMemoryStore(path)
-    assert reopened.get(created.id) == created
+    assert reopened.get(USER, created.id) == created
 
     updated = reopened.update(
+        USER,
         created.id,
         content="Prefer concise answers with examples.",
         kind="ongoing_context",
@@ -39,39 +43,55 @@ def test_long_term_memory_crud_persists_across_store_instances(tmp_path):
     assert updated.id == created.id
     assert updated.created_at == created.created_at
     assert updated.updated_at >= created.updated_at
-    assert reopened.count(kind="preference") == 0
-    assert reopened.count(kind="ongoing_context") == 1
+    assert reopened.count(USER, kind="preference") == 0
+    assert reopened.count(USER, kind="ongoing_context") == 1
 
-    assert reopened.delete(created.id)
-    assert not reopened.delete(created.id)
-    assert reopened.get(created.id) is None
+    assert reopened.delete(USER, created.id)
+    assert not reopened.delete(USER, created.id)
+    assert reopened.get(USER, created.id) is None
 
 
 def test_memory_store_validates_explicit_categories_and_content(tmp_path):
     store = LongTermMemoryStore(tmp_path / "memory.db")
 
     with pytest.raises(ValueError, match="Memory kind"):
-        store.create("Do not accept an undeclared category.", kind="other")
+        store.create(USER, "Do not accept an undeclared category.", kind="other")
     with pytest.raises(ValueError, match="cannot be empty"):
-        store.create("   ", kind="preference")
+        store.create(USER, "   ", kind="preference")
 
-    created = store.create("  Keep exact identifiers.  ", kind=" PREFERENCE ")
+    created = store.create(USER, "  Keep exact identifiers.  ", kind=" PREFERENCE ")
     assert created.kind == "preference"
     assert created.content == "Keep exact identifiers."
 
 
 def test_memory_listing_filter_limit_and_clear_are_deterministic(tmp_path):
     store = LongTermMemoryStore(tmp_path / "memory.db")
-    preference = store.create("Prefer tables.", kind="preference")
-    context = store.create("The migration is ongoing.", kind="ongoing_context")
+    preference = store.create(USER, "Prefer tables.", kind="preference")
+    context = store.create(USER, "The migration is ongoing.", kind="ongoing_context")
 
-    assert store.list(kind="preference") == [preference]
-    assert store.list(kind="ongoing_context") == [context]
-    assert len(store.list(limit=1)) == 1
-    assert store.clear(kind="preference") == 1
-    assert store.list() == [context]
-    assert store.clear() == 1
-    assert store.count() == 0
+    assert store.list(USER, kind="preference") == [preference]
+    assert store.list(USER, kind="ongoing_context") == [context]
+    assert len(store.list(USER, limit=1)) == 1
+    assert store.clear(USER, kind="preference") == 1
+    assert store.list(USER) == [context]
+    assert store.clear(USER) == 1
+    assert store.count(USER) == 0
+
+
+def test_memories_are_isolated_between_accounts(tmp_path):
+    store = LongTermMemoryStore(tmp_path / "memory.db")
+    mine = store.create(USER, "Prefer concise answers.", kind="preference")
+    store.create(OTHER_USER, "Prefer detailed answers.", kind="preference")
+
+    assert [item.id for item in store.list(USER)] == [mine.id]
+    assert store.count(USER) == 1
+    assert store.count(OTHER_USER) == 1
+    assert store.get(OTHER_USER, mine.id) is None  # can't fetch by ID across accounts
+    assert store.delete(OTHER_USER, mine.id) is False  # can't delete another account's memory
+    assert store.get(USER, mine.id) == mine  # untouched by the failed cross-account delete
+
+    assert store.clear(USER) == 1
+    assert store.count(OTHER_USER) == 1  # clearing one account never touches another's
 
 
 def test_long_term_memory_uses_a_database_separate_from_conversations(tmp_path):
@@ -79,9 +99,9 @@ def test_long_term_memory_uses_a_database_separate_from_conversations(tmp_path):
 
     conversation_path = tmp_path / "conversations.db"
     memory_path = tmp_path / "long-term.db"
-    ConversationStore(conversation_path).create("Existing conversation")
+    ConversationStore(conversation_path).create(USER, "Existing conversation")
     LongTermMemoryStore(memory_path).create(
-        "Prefer concise answers.", kind="preference"
+        USER, "Prefer concise answers.", kind="preference"
     )
 
     assert conversation_path != memory_path

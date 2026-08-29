@@ -168,7 +168,16 @@ def build_services(
             settings.long_term_memory_db_path,
             safety_policy=memory_safety,
         )
-        item_count = long_term_memory.count()
+        # Phase 55: pre-Phase-55 rows have no owner yet; assign them to the
+        # default local account, same precedent as conversations.backfill_owner
+        # (called separately in api/server.py, where ConversationStore lives).
+        if services.default_local_user is not None:
+            long_term_memory.backfill_owner(services.default_local_user.id)
+        item_count = (
+            long_term_memory.count(services.default_local_user.id)
+            if services.default_local_user is not None
+            else 0
+        )
         services.long_term_memory = long_term_memory
         services.memory_confirmation = MemoryConfirmationService(
             memory_extractor,
@@ -258,6 +267,12 @@ def build_services(
             query_processor=services.query_processor,
             medical_mode=settings.medical_mode,
             long_term_memory=services.long_term_memory,
+            # This singleton engine backs /query and the CLI/Gradio entry
+            # points, none of which resolve a per-request account (see Phase
+            # 51-53's "Not yet done" boundary) - it always reads the default
+            # local account's confirmed memory, same as those tools already
+            # implicitly assume single-account usage everywhere else.
+            user_id=services.default_local_user.id if services.default_local_user else "",
         )
         log_event(
             log,

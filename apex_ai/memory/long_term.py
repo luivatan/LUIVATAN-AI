@@ -2,7 +2,12 @@
 
 Confirmed preferences/context enter ``long_term_memories`` only through explicit
 creation or approval. Safe chat candidates may wait briefly in the independent
-pending table, but neither pending nor confirmed records are prompt context here.
+pending table. Both are prompt context only via Phase 47's relevance-filtered
+injection — this store itself does not decide what reaches a prompt.
+
+Phase 55: every row (confirmed, pending, and decision-dedup) belongs to exactly
+one account (``user_id``), following the same "check ownership in every method,
+not just the top layer" discipline ``memory/conversations.py`` uses.
 """
 
 from __future__ import annotations
@@ -177,8 +182,70 @@ class LongTermMemoryStore:
                     );
                     """
                 )
+                # Phase 55: ownership on every table, including the proposal-dedup
+                # table — without it, one user's reject/approve decision on a
+                # candidate would silently suppress the same phrase for every
+                # other user too, since candidate IDs are content-derived hashes
+                # (Phase 43) with no user component of their own.
+                self._add_owner_column(connection, "long_term_memories", "idx_long_term_memories_user")
+                self._add_owner_column(connection, "pending_memories", "idx_pending_memories_user")
+                self._add_owner_column(
+                    connection, "memory_candidate_decisions", "idx_memory_candidate_decisions_user"
+                )
+                # The dedup table's PRIMARY KEY was candidate_id alone; a
+                # content-derived ID can now legitimately repeat across users
+                # (Phase 43 IDs have no user component), so a table still on the
+                # old single-column key gets rebuilt with a composite one.
+                pk_columns = [
+                    row["name"]
+                    for row in connection.execute("PRAGMA table_info(memory_candidate_decisions)")
+                    if row["pk"] > 0
+                ]
+                if pk_columns == ["candidate_id"]:
+                    connection.executescript(
+                        """
+                        CREATE TABLE memory_candidate_decisions_v2 (
+                            candidate_id TEXT NOT NULL,
+                            user_id TEXT NOT NULL DEFAULT '',
+                            decision TEXT NOT NULL
+                                CHECK(decision IN ('approved','rejected')),
+                            memory_id TEXT,
+                            decided_at TEXT NOT NULL,
+                            PRIMARY KEY (candidate_id, user_id)
+                        );
+                        INSERT INTO memory_candidate_decisions_v2
+                            SELECT candidate_id, user_id, decision, memory_id, decided_at
+                            FROM memory_candidate_decisions;
+                        DROP TABLE memory_candidate_decisions;
+                        ALTER TABLE memory_candidate_decisions_v2
+                            RENAME TO memory_candidate_decisions;
+                        CREATE INDEX IF NOT EXISTS idx_memory_candidate_decisions_user
+                            ON memory_candidate_decisions(user_id);
+                        """
+                    )
         except sqlite3.Error as error:
             raise self._error("initialize", error) from error
+
+    @staticmethod
+    def _add_owner_column(connection: sqlite3.Connection, table: str, index_name: str) -> None:
+        columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if "user_id" not in columns:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+            connection.execute(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table}(user_id)")
+
+    def backfill_owner(self, user_id: str) -> int:
+        """Phase 55: assign every not-yet-owned row (confirmed memories, pending
+        proposals, and decisions from before this phase) to ``user_id``. Same
+        idempotent, additive-migration precedent as
+        ``ConversationStore.backfill_owner``."""
+        total = 0
+        with self._connect() as connection:
+            for table in ("long_term_memories", "pending_memories", "memory_candidate_decisions"):
+                cursor = connection.execute(
+                    f"UPDATE {table} SET user_id=? WHERE user_id=''", (user_id,)
+                )
+                total += cursor.rowcount
+        return total
 
     def _remove_unsafe_existing(self) -> int:
         """Delete recognized unsafe legacy rows without exposing their content."""
@@ -227,6 +294,7 @@ class LongTermMemoryStore:
 
     def propose_candidate(
         self,
+        user_id: str,
         proposal_id: str,
         *,
         content: str,
@@ -245,29 +313,29 @@ class LongTermMemoryStore:
         try:
             with self._connect() as connection:
                 decision = connection.execute(
-                    "SELECT 1 FROM memory_candidate_decisions WHERE candidate_id=?",
-                    (clean_id,),
+                    "SELECT 1 FROM memory_candidate_decisions WHERE candidate_id=? AND user_id=?",
+                    (clean_id, user_id),
                 ).fetchone()
                 if decision is not None:
                     return None
 
                 existing_memories = connection.execute(
-                    "SELECT id,content FROM long_term_memories WHERE kind=?",
-                    (clean_kind,),
+                    "SELECT id,content FROM long_term_memories WHERE kind=? AND user_id=?",
+                    (clean_kind, user_id),
                 ).fetchall()
                 for memory in existing_memories:
                     if _equivalent_content(memory["content"], clean_content):
                         connection.execute(
                             """INSERT OR REPLACE INTO memory_candidate_decisions
-                               (candidate_id,decision,memory_id,decided_at)
-                               VALUES (?,'approved',?,?)""",
-                            (clean_id, memory["id"], now),
+                               (candidate_id,user_id,decision,memory_id,decided_at)
+                               VALUES (?,?,'approved',?,?)""",
+                            (clean_id, user_id, memory["id"], now),
                         )
                         return None
 
                 existing = connection.execute(
-                    "SELECT * FROM pending_memories WHERE id=?",
-                    (clean_id,),
+                    "SELECT * FROM pending_memories WHERE id=? AND user_id=?",
+                    (clean_id, user_id),
                 ).fetchone()
                 if existing is not None:
                     proposal = self._pending_record(existing)
@@ -283,9 +351,9 @@ class LongTermMemoryStore:
 
                 connection.execute(
                     """INSERT INTO pending_memories
-                       (id,kind,content,rule,created_at,expires_at)
-                       VALUES (?,?,?,?,?,?)""",
-                    (clean_id, clean_kind, clean_content, clean_rule, now, expires_at),
+                       (id,user_id,kind,content,rule,created_at,expires_at)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (clean_id, user_id, clean_kind, clean_content, clean_rule, now, expires_at),
                 )
         except sqlite3.Error as error:
             raise self._error("create a pending", error) from error
@@ -298,22 +366,22 @@ class LongTermMemoryStore:
             expires_at,
         )
 
-    def pending(self, *, limit: int = 100) -> list[PendingMemory]:
+    def pending(self, user_id: str, *, limit: int = 100) -> list[PendingMemory]:
         limit = max(1, min(int(limit), 500))
         self._remove_unsafe_existing()
         self._delete_expired_proposals()
         try:
             with self._connect() as connection:
                 rows = connection.execute(
-                    """SELECT * FROM pending_memories
+                    """SELECT * FROM pending_memories WHERE user_id=?
                        ORDER BY created_at ASC,id ASC LIMIT ?""",
-                    (limit,),
+                    (user_id, limit),
                 ).fetchall()
         except sqlite3.Error as error:
             raise self._error("list pending", error) from error
         return [self._pending_record(row) for row in rows]
 
-    def approve_candidate(self, proposal_id: str) -> LongTermMemory:
+    def approve_candidate(self, user_id: str, proposal_id: str) -> LongTermMemory:
         """Move one still-safe proposal to confirmed memory atomically."""
         clean_id = _validate_proposal_id(proposal_id)
         self._delete_expired_proposals()
@@ -323,8 +391,8 @@ class LongTermMemoryStore:
         try:
             with self._connect() as connection:
                 row = connection.execute(
-                    "SELECT * FROM pending_memories WHERE id=?",
-                    (clean_id,),
+                    "SELECT * FROM pending_memories WHERE id=? AND user_id=?",
+                    (clean_id, user_id),
                 ).fetchone()
                 if row is None:
                     raise KeyError(clean_id)
@@ -332,20 +400,20 @@ class LongTermMemoryStore:
                 safety = self.safety_policy.inspect(proposal.content)
                 if not safety.safe:
                     connection.execute(
-                        "DELETE FROM pending_memories WHERE id=?",
-                        (clean_id,),
+                        "DELETE FROM pending_memories WHERE id=? AND user_id=?",
+                        (clean_id, user_id),
                     )
                     connection.execute(
                         """INSERT OR REPLACE INTO memory_candidate_decisions
-                           (candidate_id,decision,memory_id,decided_at)
-                           VALUES (?,'rejected',NULL,?)""",
-                        (clean_id, now),
+                           (candidate_id,user_id,decision,memory_id,decided_at)
+                           VALUES (?,?,'rejected',NULL,?)""",
+                        (clean_id, user_id, now),
                     )
                     blocked_content = proposal.content
                 else:
                     existing_rows = connection.execute(
-                        "SELECT * FROM long_term_memories WHERE kind=?",
-                        (proposal.kind,),
+                        "SELECT * FROM long_term_memories WHERE kind=? AND user_id=?",
+                        (proposal.kind, user_id),
                     ).fetchall()
                     memory = next(
                         (
@@ -365,10 +433,11 @@ class LongTermMemoryStore:
                         )
                         connection.execute(
                             """INSERT INTO long_term_memories
-                               (id,kind,content,created_at,updated_at)
-                               VALUES (?,?,?,?,?)""",
+                               (id,user_id,kind,content,created_at,updated_at)
+                               VALUES (?,?,?,?,?,?)""",
                             (
                                 memory.id,
+                                user_id,
                                 memory.kind,
                                 memory.content,
                                 memory.created_at,
@@ -376,14 +445,14 @@ class LongTermMemoryStore:
                             ),
                         )
                     connection.execute(
-                        "DELETE FROM pending_memories WHERE id=?",
-                        (clean_id,),
+                        "DELETE FROM pending_memories WHERE id=? AND user_id=?",
+                        (clean_id, user_id),
                     )
                     connection.execute(
                         """INSERT OR REPLACE INTO memory_candidate_decisions
-                           (candidate_id,decision,memory_id,decided_at)
-                           VALUES (?,'approved',?,?)""",
-                        (clean_id, memory.id, now),
+                           (candidate_id,user_id,decision,memory_id,decided_at)
+                           VALUES (?,?,'approved',?,?)""",
+                        (clean_id, user_id, memory.id, now),
                     )
         except sqlite3.Error as error:
             raise self._error("approve pending", error) from error
@@ -394,7 +463,7 @@ class LongTermMemoryStore:
             raise RuntimeError("Memory approval produced no result.")
         return memory
 
-    def reject_candidate(self, proposal_id: str) -> bool:
+    def reject_candidate(self, user_id: str, proposal_id: str) -> bool:
         """Delete pending content and retain only its content-derived ID tombstone."""
         clean_id = _validate_proposal_id(proposal_id)
         self._delete_expired_proposals()
@@ -402,26 +471,26 @@ class LongTermMemoryStore:
         try:
             with self._connect() as connection:
                 exists = connection.execute(
-                    "SELECT 1 FROM pending_memories WHERE id=?",
-                    (clean_id,),
+                    "SELECT 1 FROM pending_memories WHERE id=? AND user_id=?",
+                    (clean_id, user_id),
                 ).fetchone()
                 if exists is None:
                     return False
                 connection.execute(
-                    "DELETE FROM pending_memories WHERE id=?",
-                    (clean_id,),
+                    "DELETE FROM pending_memories WHERE id=? AND user_id=?",
+                    (clean_id, user_id),
                 )
                 connection.execute(
                     """INSERT OR REPLACE INTO memory_candidate_decisions
-                       (candidate_id,decision,memory_id,decided_at)
-                       VALUES (?,'rejected',NULL,?)""",
-                    (clean_id, now),
+                       (candidate_id,user_id,decision,memory_id,decided_at)
+                       VALUES (?,?,'rejected',NULL,?)""",
+                    (clean_id, user_id, now),
                 )
                 return True
         except sqlite3.Error as error:
             raise self._error("reject pending", error) from error
 
-    def create(self, content: str, *, kind: str) -> LongTermMemory:
+    def create(self, user_id: str, content: str, *, kind: str) -> LongTermMemory:
         """Persist one explicit memory; callers must choose its declared kind."""
         clean_kind = _validate_kind(kind)
         clean_content = _validate_content(content)
@@ -432,20 +501,20 @@ class LongTermMemoryStore:
             with self._connect() as connection:
                 connection.execute(
                     """INSERT INTO long_term_memories
-                       (id,kind,content,created_at,updated_at)
-                       VALUES (?,?,?,?,?)""",
-                    (memory_id, clean_kind, clean_content, now, now),
+                       (id,user_id,kind,content,created_at,updated_at)
+                       VALUES (?,?,?,?,?,?)""",
+                    (memory_id, user_id, clean_kind, clean_content, now, now),
                 )
         except sqlite3.Error as error:
             raise self._error("create", error) from error
         return LongTermMemory(memory_id, clean_kind, clean_content, now, now)
 
-    def get(self, memory_id: str) -> LongTermMemory | None:
+    def get(self, user_id: str, memory_id: str) -> LongTermMemory | None:
         try:
             with self._connect() as connection:
                 row = connection.execute(
-                    "SELECT * FROM long_term_memories WHERE id=?",
-                    (memory_id,),
+                    "SELECT * FROM long_term_memories WHERE id=? AND user_id=?",
+                    (memory_id, user_id),
                 ).fetchone()
         except sqlite3.Error as error:
             raise self._error("read", error) from error
@@ -453,16 +522,17 @@ class LongTermMemoryStore:
 
     def list(
         self,
+        user_id: str,
         *,
         kind: str | None = None,
         limit: int = 100,
     ) -> list[LongTermMemory]:
         clean_kind = _validate_kind(kind) if kind is not None else None
         limit = max(1, min(int(limit), 500))
-        sql = "SELECT * FROM long_term_memories"
-        params: list[Any] = []
+        sql = "SELECT * FROM long_term_memories WHERE user_id=?"
+        params: list[Any] = [user_id]
         if clean_kind is not None:
-            sql += " WHERE kind=?"
+            sql += " AND kind=?"
             params.append(clean_kind)
         sql += " ORDER BY updated_at DESC,id DESC LIMIT ?"
         params.append(limit)
@@ -475,13 +545,14 @@ class LongTermMemoryStore:
 
     def update(
         self,
+        user_id: str,
         memory_id: str,
         *,
         content: str | None = None,
         kind: str | None = None,
     ) -> LongTermMemory:
         """Update explicit fields without changing the stable memory ID."""
-        existing = self.get(memory_id)
+        existing = self.get(user_id, memory_id)
         if existing is None:
             raise KeyError(memory_id)
         clean_content = (
@@ -494,8 +565,8 @@ class LongTermMemoryStore:
             with self._connect() as connection:
                 connection.execute(
                     """UPDATE long_term_memories
-                       SET kind=?,content=?,updated_at=? WHERE id=?""",
-                    (clean_kind, clean_content, updated_at, memory_id),
+                       SET kind=?,content=?,updated_at=? WHERE id=? AND user_id=?""",
+                    (clean_kind, clean_content, updated_at, memory_id, user_id),
                 )
         except sqlite3.Error as error:
             raise self._error("update", error) from error
@@ -507,55 +578,59 @@ class LongTermMemoryStore:
             updated_at,
         )
 
-    def delete(self, memory_id: str) -> bool:
+    def delete(self, user_id: str, memory_id: str) -> bool:
         try:
             with self._connect() as connection:
                 cursor = connection.execute(
-                    "DELETE FROM long_term_memories WHERE id=?",
-                    (memory_id,),
+                    "DELETE FROM long_term_memories WHERE id=? AND user_id=?",
+                    (memory_id, user_id),
                 )
                 return cursor.rowcount > 0
         except sqlite3.Error as error:
             raise self._error("delete", error) from error
 
-    def clear(self, *, kind: str | None = None) -> int:
+    def clear(self, user_id: str, *, kind: str | None = None) -> int:
         clean_kind = _validate_kind(kind) if kind is not None else None
         try:
             with self._connect() as connection:
                 if clean_kind is None:
                     count = int(
                         connection.execute(
-                            "SELECT COUNT(*) FROM long_term_memories"
-                        ).fetchone()[0]
-                    )
-                    connection.execute("DELETE FROM long_term_memories")
-                else:
-                    count = int(
-                        connection.execute(
-                            "SELECT COUNT(*) FROM long_term_memories WHERE kind=?",
-                            (clean_kind,),
+                            "SELECT COUNT(*) FROM long_term_memories WHERE user_id=?",
+                            (user_id,),
                         ).fetchone()[0]
                     )
                     connection.execute(
-                        "DELETE FROM long_term_memories WHERE kind=?",
-                        (clean_kind,),
+                        "DELETE FROM long_term_memories WHERE user_id=?", (user_id,)
+                    )
+                else:
+                    count = int(
+                        connection.execute(
+                            "SELECT COUNT(*) FROM long_term_memories WHERE kind=? AND user_id=?",
+                            (clean_kind, user_id),
+                        ).fetchone()[0]
+                    )
+                    connection.execute(
+                        "DELETE FROM long_term_memories WHERE kind=? AND user_id=?",
+                        (clean_kind, user_id),
                     )
                 return count
         except sqlite3.Error as error:
             raise self._error("clear", error) from error
 
-    def count(self, *, kind: str | None = None) -> int:
+    def count(self, user_id: str, *, kind: str | None = None) -> int:
         clean_kind = _validate_kind(kind) if kind is not None else None
         try:
             with self._connect() as connection:
                 if clean_kind is None:
                     row = connection.execute(
-                        "SELECT COUNT(*) FROM long_term_memories"
+                        "SELECT COUNT(*) FROM long_term_memories WHERE user_id=?",
+                        (user_id,),
                     ).fetchone()
                 else:
                     row = connection.execute(
-                        "SELECT COUNT(*) FROM long_term_memories WHERE kind=?",
-                        (clean_kind,),
+                        "SELECT COUNT(*) FROM long_term_memories WHERE kind=? AND user_id=?",
+                        (clean_kind, user_id),
                     ).fetchone()
                 return int(row[0])
         except sqlite3.Error as error:

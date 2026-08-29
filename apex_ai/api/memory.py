@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from apex_ai.api.auth import make_require_user_dependency
 from apex_ai.api.errors import APIError
 from apex_ai.api.schemas import (
     ApproveMemoryOut,
@@ -30,6 +31,7 @@ def _unavailable() -> APIError:
 
 def create_memory_router(services) -> APIRouter:
     router = APIRouter(prefix="/memory", tags=["memory"])
+    require_user = make_require_user_dependency(services)
 
     def confirmation_service():
         service = services.memory_confirmation
@@ -46,12 +48,12 @@ def create_memory_router(services) -> APIRouter:
         return store
 
     @router.get("/candidates", response_model=list[MemoryCandidateOut])
-    def list_candidates():
+    def list_candidates(user=Depends(require_user)):
         try:
             service = confirmation_service()
             payloads = []
-            for item in service.pending():
-                conflict = service.find_conflict(item)
+            for item in service.pending(user.id):
+                conflict = service.find_conflict(user.id, item)
                 payloads.append(
                     {**item.to_dict(), "conflicts_with": conflict.to_dict() if conflict else None}
                 )
@@ -60,9 +62,9 @@ def create_memory_router(services) -> APIRouter:
             raise APIError.from_apex(error, status_code=503) from error
 
     @router.post("/candidates/{proposal_id}/approve", response_model=ApproveMemoryOut)
-    def approve_candidate(proposal_id: str):
+    def approve_candidate(proposal_id: str, user=Depends(require_user)):
         try:
-            memory = confirmation_service().approve(proposal_id)
+            memory = confirmation_service().approve(user.id, proposal_id)
             return {"approved": True, "memory": memory.to_dict()}
         except KeyError as error:
             raise HTTPException(
@@ -75,9 +77,9 @@ def create_memory_router(services) -> APIRouter:
             raise APIError.from_apex(error, status_code=400) from error
 
     @router.post("/candidates/{proposal_id}/reject", response_model=RejectMemoryOut)
-    def reject_candidate(proposal_id: str):
+    def reject_candidate(proposal_id: str, user=Depends(require_user)):
         try:
-            if not confirmation_service().reject(proposal_id):
+            if not confirmation_service().reject(user.id, proposal_id):
                 raise HTTPException(
                     status_code=404,
                     detail="That memory proposal is missing or expired.",
@@ -89,18 +91,18 @@ def create_memory_router(services) -> APIRouter:
             raise APIError.from_apex(error, status_code=503) from error
 
     @router.get("", response_model=list[LongTermMemoryOut])
-    def list_memories(kind: str | None = None):
+    def list_memories(kind: str | None = None, user=Depends(require_user)):
         try:
-            return [item.to_dict() for item in memory_store().list(kind=kind)]
+            return [item.to_dict() for item in memory_store().list(user.id, kind=kind)]
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         except ApexError as error:
             raise APIError.from_apex(error, status_code=503) from error
 
     @router.delete("/{memory_id}", response_model=DeletedOut)
-    def delete_memory(memory_id: str):
+    def delete_memory(memory_id: str, user=Depends(require_user)):
         try:
-            deleted = memory_store().delete(memory_id)
+            deleted = memory_store().delete(user.id, memory_id)
         except ApexError as error:
             raise APIError.from_apex(error, status_code=503) from error
         if not deleted:
@@ -108,9 +110,9 @@ def create_memory_router(services) -> APIRouter:
         return {"deleted": True}
 
     @router.delete("", response_model=DeletedCountOut)
-    def clear_memories(kind: str | None = None):
+    def clear_memories(kind: str | None = None, user=Depends(require_user)):
         try:
-            return {"deleted": memory_store().clear(kind=kind)}
+            return {"deleted": memory_store().clear(user.id, kind=kind)}
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         except ApexError as error:

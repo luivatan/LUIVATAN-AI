@@ -10,11 +10,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, Response
+from fastapi import Depends, FastAPI, Response
 from pydantic import BaseModel, Field
 
 from apex_ai import APP_NAME, __version__
-from apex_ai.api.auth import create_auth_router
+from apex_ai.api.auth import create_auth_router, make_require_user_dependency
 from apex_ai.api.chat import GenerationManager, create_chat_router
 from apex_ai.api.errors import install_error_handlers, service_not_ready_error
 from apex_ai.api.memory import create_memory_router
@@ -66,6 +66,11 @@ def create_api(
 ) -> FastAPI:
     services = services or build_services()
     conversations = conversations or ConversationStore(services.settings.conversation_db_path)
+    # Phase 55: pre-Phase-55 conversations have no owner yet; assign them to the
+    # default local account, same precedent as long_term_memory.backfill_owner
+    # (runtime.py, where LongTermMemoryStore lives).
+    if services.default_local_user is not None:
+        conversations.backfill_owner(services.default_local_user.id)
     app = FastAPI(
         title=APP_NAME,
         version=__version__,
@@ -251,9 +256,11 @@ def create_api(
     app.include_router(create_memory_router(services))
     app.include_router(create_chat_router(services, conversations, app.state.generations))
 
+    require_user = make_require_user_dependency(services)
+
     @app.delete("/conversations", response_model=DeletedCountOut)
-    def delete_all_conversations():
-        return {"deleted": conversations.clear()}
+    def delete_all_conversations(user=Depends(require_user)):
+        return {"deleted": conversations.clear(user.id)}
 
     if include_web:
         from apex_ai.web.app import mount_web_ui

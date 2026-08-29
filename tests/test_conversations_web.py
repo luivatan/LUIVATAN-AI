@@ -8,9 +8,14 @@ import pytest
 
 from tests.conftest import DATA_DIR, FakeLLM
 
+USER = "user-1"
+
 
 @pytest.fixture()
 def web_services(settings, ingestion, embeddings, store):
+    from apex_ai.auth.service import AuthService
+    from apex_ai.auth.sessions import SessionStore
+    from apex_ai.auth.users import UserStore
     from apex_ai.memory.confirmation import MemoryConfirmationService
     from apex_ai.memory.conversation import ConversationMemory
     from apex_ai.memory.extraction import MemoryCandidateExtractor
@@ -39,6 +44,12 @@ def web_services(settings, ingestion, embeddings, store):
         memory_extractor,
         long_term_memory,
     )
+    auth = AuthService(
+        UserStore(settings.users_db_path),
+        SessionStore(settings.users_db_path),
+        session_ttl_days=settings.session_ttl_days,
+    )
+    default_local_user = auth.ensure_default_local_account()
     engine = RagEngine(
         settings=settings,
         store=store,
@@ -47,6 +58,8 @@ def web_services(settings, ingestion, embeddings, store):
         memory=memory,
         llm_provider=FakeLLM(),
         query_processor=query_processor,
+        long_term_memory=long_term_memory,
+        user_id=default_local_user.id,
     )
     return ApexServices(
         settings=settings,
@@ -63,6 +76,8 @@ def web_services(settings, ingestion, embeddings, store):
         query_processor=query_processor,
         engine=engine,
         models=ModelManager(settings),
+        auth=auth,
+        default_local_user=default_local_user,
     )
 
 
@@ -74,6 +89,7 @@ def web_client(web_services):
     from apex_ai.memory.conversations import ConversationStore
 
     conversations = ConversationStore(web_services.settings.conversation_db_path)
+    conversations.backfill_owner(web_services.default_local_user.id)
     return TestClient(create_api(web_services, conversations=conversations))
 
 
@@ -93,19 +109,19 @@ def test_conversation_store_crud_search_and_persistence(tmp_path):
 
     path = tmp_path / "history.db"
     store = ConversationStore(path)
-    conversation = store.create()
-    user = store.add_message(conversation.id, "user", "Explain oral rehydration therapy")
-    store.add_message(conversation.id, "assistant", "Use the cited guidance.")
+    conversation = store.create(USER)
+    user = store.add_message(USER, conversation.id, "user", "Explain oral rehydration therapy")
+    store.add_message(USER, conversation.id, "assistant", "Use the cited guidance.")
 
-    assert store.get(conversation.id).title.startswith("Explain oral rehydration")
-    assert store.list(search="rehydration")[0].id == conversation.id
-    assert store.list(search="cited guidance")[0].id == conversation.id
-    assert len(ConversationStore(path).messages(conversation.id)) == 2
-    assert store.recent_turns(conversation.id, 8) == [
+    assert store.get(USER, conversation.id).title.startswith("Explain oral rehydration")
+    assert store.list(USER, search="rehydration")[0].id == conversation.id
+    assert store.list(USER, search="cited guidance")[0].id == conversation.id
+    assert len(ConversationStore(path).messages(USER, conversation.id)) == 2
+    assert store.recent_turns(USER, conversation.id, 8) == [
         {"user": user.content, "assistant": "Use the cited guidance."}
     ]
-    assert store.delete(conversation.id)
-    assert store.get(conversation.id) is None
+    assert store.delete(USER, conversation.id)
+    assert store.get(USER, conversation.id) is None
 
 
 def test_conversation_memory_adapter_excludes_pending_user(tmp_path):
@@ -115,12 +131,12 @@ def test_conversation_memory_adapter_excludes_pending_user(tmp_path):
     )
 
     store = ConversationStore(tmp_path / "history.db")
-    conversation = store.create()
-    store.add_message(conversation.id, "user", "First question")
-    store.add_message(conversation.id, "assistant", "First answer")
-    pending = store.add_message(conversation.id, "user", "Follow-up")
+    conversation = store.create(USER)
+    store.add_message(USER, conversation.id, "user", "First question")
+    store.add_message(USER, conversation.id, "assistant", "First answer")
+    pending = store.add_message(USER, conversation.id, "user", "Follow-up")
     adapter = ConversationMemoryAdapter(
-        store, conversation.id, 8, exclude_user_message_id=pending.id
+        store, USER, conversation.id, 8, exclude_user_message_id=pending.id
     )
     assert adapter.recent() == [{"user": "First question", "assistant": "First answer"}]
 
@@ -228,7 +244,7 @@ def test_memory_candidate_requires_approval_then_becomes_relevant_context(
     proposal = stream[0]["memory_candidates"][0]
 
     assert proposal["content"] == preference
-    assert web_services.long_term_memory.count() == 0
+    assert web_services.long_term_memory.count(web_services.default_local_user.id) == 0
     assert web_client.get("/memory/candidates").json() == [proposal]
 
     approved = web_client.post(
@@ -237,7 +253,7 @@ def test_memory_candidate_requires_approval_then_becomes_relevant_context(
 
     assert approved.status_code == 200
     assert approved.json()["memory"]["content"] == preference
-    assert web_services.long_term_memory.count() == 1
+    assert web_services.long_term_memory.count(web_services.default_local_user.id) == 1
     assert web_client.get("/memory/candidates").json() == []
 
     follow_up = web_client.post(
@@ -278,7 +294,7 @@ def test_memory_candidate_can_be_rejected_without_storing_content(
 
     assert rejected.status_code == 200
     assert rejected.json() == {"rejected": True}
-    assert web_services.long_term_memory.count() == 0
+    assert web_services.long_term_memory.count(web_services.default_local_user.id) == 0
     assert web_client.get("/memory/candidates").json() == []
 
     repeated = events(
@@ -305,8 +321,8 @@ def test_unsafe_memory_candidate_is_never_offered(web_client, web_services):
     )
 
     assert stream[0]["memory_candidates"] == []
-    assert web_services.long_term_memory.pending() == []
-    assert web_services.long_term_memory.count() == 0
+    assert web_services.long_term_memory.pending(web_services.default_local_user.id) == []
+    assert web_services.long_term_memory.count(web_services.default_local_user.id) == 0
 
 
 def test_conversation_summary_folds_old_turns_and_reaches_later_prompts(
@@ -336,7 +352,9 @@ def test_conversation_summary_folds_old_turns_and_reaches_later_prompts(
         conversation_id = stream[0]["conversation"]["id"]
 
     store = ConversationStore(web_services.settings.conversation_db_path)
-    summary, summarized_count = store.summary_state(conversation_id)
+    summary, summarized_count = store.summary_state(
+        web_services.default_local_user.id, conversation_id
+    )
     assert summary  # FakeLLM's canned response, folded in as the "summary" text
     assert summarized_count > 0
 
@@ -377,7 +395,9 @@ def test_conversation_summary_is_off_by_default(web_client, web_services):
         conversation_id = stream[0]["conversation"]["id"]
 
     store = ConversationStore(web_services.settings.conversation_db_path)
-    summary, summarized_count = store.summary_state(conversation_id)
+    summary, summarized_count = store.summary_state(
+        web_services.default_local_user.id, conversation_id
+    )
     assert summary == ""
     assert summarized_count == 0
 
@@ -385,7 +405,9 @@ def test_conversation_summary_is_off_by_default(web_client, web_services):
 def test_memory_candidate_flags_a_conflict_with_an_existing_memory(web_client, web_services):
     """Phase 49: detection only - the existing memory is untouched; a human
     still decides via approve/reject (Phase 45) or delete (Phase 46)."""
-    existing = web_services.long_term_memory.create("I prefer detailed answers.", kind="preference")
+    existing = web_services.long_term_memory.create(
+        web_services.default_local_user.id, "I prefer detailed answers.", kind="preference"
+    )
 
     stream = events(
         web_client.post(
@@ -404,17 +426,21 @@ def test_memory_candidate_flags_a_conflict_with_an_existing_memory(web_client, w
     assert listed[0]["conflicts_with"]["id"] == existing.id
 
     # Nothing was auto-resolved: both memories still exist independently.
-    assert web_services.long_term_memory.count() == 1
+    assert web_services.long_term_memory.count(web_services.default_local_user.id) == 1
     web_client.post(f"/memory/candidates/{proposal['id']}/approve")
-    assert web_services.long_term_memory.count() == 2
-    assert existing == web_services.long_term_memory.get(existing.id)
+    assert web_services.long_term_memory.count(web_services.default_local_user.id) == 2
+    assert existing == web_services.long_term_memory.get(web_services.default_local_user.id, existing.id)
 
 
 def test_memory_management_list_delete_and_clear(web_client, web_services):
     """Phase 46: confirmed-memory CRUD is a direct store operation, not routed
     through candidate proposal/approval."""
-    first = web_services.long_term_memory.create("Prefers concise answers.", kind="preference")
-    web_services.long_term_memory.create("Working on a Q3 budget review.", kind="ongoing_context")
+    first = web_services.long_term_memory.create(
+        web_services.default_local_user.id, "Prefers concise answers.", kind="preference"
+    )
+    web_services.long_term_memory.create(
+        web_services.default_local_user.id, "Working on a Q3 budget review.", kind="ongoing_context"
+    )
 
     listed = web_client.get("/memory").json()
     assert {item["content"] for item in listed} == {

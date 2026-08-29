@@ -13,10 +13,11 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from apex_ai.api.auth import make_require_user_dependency
 from apex_ai.api.errors import (
     internal_error_problem,
     problem_from_apex,
@@ -114,7 +115,7 @@ def _citation_payload(citation) -> dict:
 
 
 def _maybe_update_conversation_summary(
-    services, conversations, conversation_id: str, llm_provider
+    services, conversations, user_id: str, conversation_id: str, llm_provider
 ) -> None:
     """Phase 50: opportunistically fold turns that just fell out of the live
     short-term window into the conversation's rolling summary.
@@ -136,8 +137,8 @@ def _maybe_update_conversation_summary(
     if not services.settings.conversation_summary:
         return
     try:
-        messages = conversations.messages(conversation_id)
-        existing_summary, summarized_count = conversations.summary_state(conversation_id)
+        messages = conversations.messages(user_id, conversation_id)
+        existing_summary, summarized_count = conversations.summary_state(user_id, conversation_id)
         # memory_turns is counted in turns; approximate the message-count
         # equivalent of "still live" as two messages (user + assistant) per turn.
         keep_live_messages = max(0, int(services.settings.memory_turns)) * 2
@@ -150,7 +151,7 @@ def _maybe_update_conversation_summary(
             return
         if not pending.turns_text:
             conversations.update_summary(
-                conversation_id, existing_summary, pending.through_message_count
+                user_id, conversation_id, existing_summary, pending.through_message_count
             )
             return
         summary_messages = build_summary_messages(existing_summary, pending.turns_text)
@@ -160,7 +161,7 @@ def _maybe_update_conversation_summary(
         new_summary = (new_summary or "").strip()
         if new_summary:
             conversations.update_summary(
-                conversation_id, new_summary, pending.through_message_count
+                user_id, conversation_id, new_summary, pending.through_message_count
             )
     except Exception as error:  # noqa: BLE001 - optional continuity boundary
         log.warning(
@@ -169,17 +170,17 @@ def _maybe_update_conversation_summary(
         )
 
 
-def _candidate_payload(candidate, confirmation_service) -> dict:
+def _candidate_payload(candidate, confirmation_service, user_id: str) -> dict:
     """Phase 49: attach any detected conflict so the confirmation card can warn
     before the user approves, without changing what approval itself does."""
-    conflict = confirmation_service.find_conflict(candidate)
+    conflict = confirmation_service.find_conflict(user_id, candidate)
     return {
         **candidate.to_dict(),
         "conflicts_with": conflict.to_dict() if conflict else None,
     }
 
 
-def _engine_for_conversation(services, memory) -> RagEngine:
+def _engine_for_conversation(services, memory, user_id: str) -> RagEngine:
     """Reuse every existing backend component, changing only the memory view."""
     base = services.engine
     return RagEngine(
@@ -192,6 +193,7 @@ def _engine_for_conversation(services, memory) -> RagEngine:
         query_processor=services.query_processor,
         medical_mode=base.medical_mode,
         long_term_memory=services.long_term_memory,
+        user_id=user_id,
     )
 
 
@@ -202,37 +204,42 @@ def create_chat_router(
 ) -> APIRouter:
     router = APIRouter(tags=["chat"])
     generations = generations or GenerationManager()
+    require_user = make_require_user_dependency(services)
 
     @router.get("/conversations", response_model=list[ConversationOut])
-    def list_conversations(search: str = ""):
-        return [item.to_dict() for item in conversations.list(search=search)]
+    def list_conversations(search: str = "", user=Depends(require_user)):
+        return [item.to_dict() for item in conversations.list(user.id, search=search)]
 
     @router.post("/conversations", status_code=201, response_model=ConversationOut)
-    def create_conversation(payload: ConversationCreate):
-        return conversations.create(payload.title).to_dict()
+    def create_conversation(payload: ConversationCreate, user=Depends(require_user)):
+        return conversations.create(user.id, payload.title).to_dict()
 
     @router.get("/conversations/{conversation_id}", response_model=ConversationDetailOut)
-    def get_conversation(conversation_id: str):
-        conversation = conversations.get(conversation_id)
+    def get_conversation(conversation_id: str, user=Depends(require_user)):
+        conversation = conversations.get(user.id, conversation_id)
         if conversation is None:
             raise HTTPException(status_code=404, detail="Conversation not found.")
         return {
             **conversation.to_dict(),
-            "messages": [message.to_dict() for message in conversations.messages(conversation_id)],
+            "messages": [
+                message.to_dict() for message in conversations.messages(user.id, conversation_id)
+            ],
         }
 
     @router.patch("/conversations/{conversation_id}", response_model=ConversationOut)
-    def rename_conversation(conversation_id: str, payload: ConversationRename):
+    def rename_conversation(
+        conversation_id: str, payload: ConversationRename, user=Depends(require_user)
+    ):
         try:
-            return conversations.rename(conversation_id, payload.title).to_dict()
+            return conversations.rename(user.id, conversation_id, payload.title).to_dict()
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Conversation not found.") from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
     @router.delete("/conversations/{conversation_id}", response_model=DeletedOut)
-    def delete_conversation(conversation_id: str):
-        if not conversations.delete(conversation_id):
+    def delete_conversation(conversation_id: str, user=Depends(require_user)):
+        if not conversations.delete(user.id, conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found.")
         return {"deleted": True}
 
@@ -240,12 +247,17 @@ def create_chat_router(
         "/conversations/{conversation_id}/messages/{message_id}/feedback",
         response_model=MessageOut,
     )
-    def set_message_feedback(conversation_id: str, message_id: str, payload: MessageFeedback):
+    def set_message_feedback(
+        conversation_id: str,
+        message_id: str,
+        payload: MessageFeedback,
+        user=Depends(require_user),
+    ):
         """Local up/down reaction to one assistant message (Phase 17 response
         action). Not aggregated, not sent anywhere, not used by generation."""
         try:
             return conversations.set_feedback(
-                conversation_id, message_id, payload.feedback
+                user.id, conversation_id, message_id, payload.feedback
             ).to_dict()
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Message not found.") from error
@@ -253,26 +265,28 @@ def create_chat_router(
             raise HTTPException(status_code=400, detail=str(error)) from error
 
     @router.post("/chat/stop", response_model=StopOut)
-    def stop_generation(payload: StopRequest):
+    def stop_generation(payload: StopRequest, user=Depends(require_user)):
         return {"stopping": generations.request_stop(payload.request_id)}
 
     @router.post("/chat/stream")
-    def stream_chat(payload: ChatStreamRequest):
+    def stream_chat(payload: ChatStreamRequest, user=Depends(require_user)):
         if not services.ready:
             raise service_not_ready_error()
 
         request_id = payload.request_id or str(uuid.uuid4())
         conversation = (
-            conversations.get(payload.conversation_id) if payload.conversation_id else None
+            conversations.get(user.id, payload.conversation_id)
+            if payload.conversation_id
+            else None
         )
         if payload.conversation_id and conversation is None:
             raise HTTPException(status_code=404, detail="Conversation not found.")
         if conversation is None:
-            conversation = conversations.create()
+            conversation = conversations.create(user.id)
 
         pending_user = None
         if payload.regenerate:
-            pending_user = conversations.last_user_message(conversation.id)
+            pending_user = conversations.last_user_message(user.id, conversation.id)
             if pending_user is None:
                 raise HTTPException(
                     status_code=400, detail="There is no user message to regenerate."
@@ -291,7 +305,7 @@ def create_chat_router(
             raise HTTPException(status_code=409, detail=str(error)) from error
         if pending_user is None:
             try:
-                pending_user = conversations.add_message(conversation.id, "user", question)
+                pending_user = conversations.add_message(user.id, conversation.id, "user", question)
             except Exception:
                 generations.unregister(request_id)
                 raise
@@ -300,9 +314,9 @@ def create_chat_router(
         if not payload.regenerate and services.memory_confirmation is not None:
             try:
                 memory_candidates = [
-                    _candidate_payload(item, services.memory_confirmation)
+                    _candidate_payload(item, services.memory_confirmation, user.id)
                     for item in services.memory_confirmation.propose_from_user_message(
-                        question
+                        user.id, question
                     )
                 ]
             except Exception as error:  # noqa: BLE001 - optional memory boundary
@@ -321,18 +335,19 @@ def create_chat_router(
                 yield _event(
                     "meta",
                     request_id=request_id,
-                    conversation=conversations.get(conversation.id).to_dict(),
+                    conversation=conversations.get(user.id, conversation.id).to_dict(),
                     user_message=pending_user.to_dict(),
                     regenerate=payload.regenerate,
                     memory_candidates=memory_candidates,
                 )
                 memory = ConversationMemoryAdapter(
                     conversations,
+                    user.id,
                     conversation.id,
                     services.settings.memory_turns,
                     exclude_user_message_id=pending_user.id,
                 )
-                engine = _engine_for_conversation(services, memory)
+                engine = _engine_for_conversation(services, memory, user.id)
                 iterator = engine.ask_stream(question, use_memory=payload.use_memory)
                 for engine_event in iterator:
                     if stop_event.is_set():
@@ -349,13 +364,13 @@ def create_chat_router(
                     answer = result.answer
                     citations = [_citation_payload(item) for item in result.citations]
                     if payload.regenerate:
-                        conversations.remove_answers_after(pending_user)
+                        conversations.remove_answers_after(user.id, pending_user)
                     message = conversations.add_message(
-                        conversation.id, "assistant", answer, citations=citations
+                        user.id, conversation.id, "assistant", answer, citations=citations
                     )
                     persisted = True
                     _maybe_update_conversation_summary(
-                        services, conversations, conversation.id, engine.llm
+                        services, conversations, user.id, conversation.id, engine.llm
                     )
                     yield _event(
                         "final",
@@ -365,7 +380,7 @@ def create_chat_router(
                         insufficient_evidence=result.insufficient_evidence,
                         queries_used=result.queries_used,
                         timings=result.timings,
-                        conversation=conversations.get(conversation.id).to_dict(),
+                        conversation=conversations.get(user.id, conversation.id).to_dict(),
                     )
 
                 if stop_event.is_set():
@@ -373,9 +388,9 @@ def create_chat_router(
                     message_payload = None
                     if partial:
                         if payload.regenerate:
-                            conversations.remove_answers_after(pending_user)
+                            conversations.remove_answers_after(user.id, pending_user)
                         message = conversations.add_message(
-                            conversation.id, "assistant", partial, status="stopped"
+                            user.id, conversation.id, "assistant", partial, status="stopped"
                         )
                         message_payload = message.to_dict()
                         persisted = True
@@ -396,6 +411,7 @@ def create_chat_router(
                 if not persisted and parts and not payload.regenerate:
                     try:
                         conversations.add_message(
+                            user.id,
                             conversation.id,
                             "assistant",
                             "".join(parts).strip(),

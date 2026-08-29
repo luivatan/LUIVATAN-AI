@@ -69,6 +69,16 @@ def make_require_user_dependency(services):
     this the same way they already depend on ``services`` via closures."""
 
     def require_user(request: Request):
+        if services.auth is None:
+            # Distinct from "not signed in": the auth subsystem itself never
+            # came up (see runtime.py's startup_error handling), so telling
+            # the caller to sign in would be misleading.
+            raise APIError(
+                503,
+                "Accounts are temporarily unavailable. Try again shortly.",
+                code="auth_unavailable",
+                retryable=True,
+            )
         user = get_current_user(request, services)
         if user is not None:
             return user

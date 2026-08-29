@@ -156,6 +156,7 @@ class RagEngine:
         query_processor: QueryProcessor | None = None,
         medical_mode: bool = True,
         long_term_memory=None,
+        user_id: str = "",
     ) -> None:
         self.settings = settings
         self.store = store
@@ -170,6 +171,10 @@ class RagEngine:
         # long-term preferences/context (Phase 42/45/46). Both stay out of
         # document evidence and citations either way.
         self.long_term_memory = long_term_memory
+        # Phase 55: whose confirmed memory to read. Empty only for callers that
+        # never wire long_term_memory in the first place (most existing tests);
+        # any real long_term_memory store now requires a real user_id to query.
+        self.user_id = user_id
 
     # -- preparation (retrieval + context; no generation) -----------------
 
@@ -310,7 +315,7 @@ class RagEngine:
             self.settings, "memory_prompt_use", True
         ):
             try:
-                confirmed = self.long_term_memory.list(limit=50)
+                confirmed = self.long_term_memory.list(self.user_id, limit=50)
                 relevant = select_relevant_memories(question, confirmed)
                 turn.memory_text = format_memory_text(relevant)
             except Exception as error:  # noqa: BLE001 - optional personalization boundary

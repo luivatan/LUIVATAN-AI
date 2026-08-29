@@ -88,15 +88,15 @@ def test_store_rejects_unsafe_create_and_update_without_echoing_value(tmp_path):
     secret = _fake_provider_key()
 
     with pytest.raises(UnsafeMemoryError) as create_error:
-        store.create("My API key is " + secret, kind="ongoing_context")
+        store.create("user-1", "My API key is " + secret, kind="ongoing_context")
     assert secret not in create_error.value.user_message()
-    assert store.count() == 0
+    assert store.count("user-1") == 0
 
-    memory = store.create("I prefer concise answers.", kind="preference")
+    memory = store.create("user-1", "I prefer concise answers.", kind="preference")
     with pytest.raises(UnsafeMemoryError) as update_error:
-        store.update(memory.id, content="My password is dummy-pass-456")
+        store.update("user-1", memory.id, content="My password is dummy-pass-456")
     assert "dummy-pass-456" not in update_error.value.user_message()
-    assert store.get(memory.id) == memory
+    assert store.get("user-1", memory.id) == memory
 
 
 def test_candidate_extractor_drops_unsafe_candidates_before_output():
@@ -111,7 +111,7 @@ def test_candidate_extractor_drops_unsafe_candidates_before_output():
 def test_store_removes_recognized_unsafe_legacy_rows_on_open(tmp_path):
     path = tmp_path / "memory.db"
     store = LongTermMemoryStore(path)
-    memory = store.create("The Atlas migration is ongoing.", kind="ongoing_context")
+    memory = store.create("user-1", "The Atlas migration is ongoing.", kind="ongoing_context")
     secret = _fake_provider_key()
 
     with sqlite3.connect(path) as connection:
@@ -123,7 +123,7 @@ def test_store_removes_recognized_unsafe_legacy_rows_on_open(tmp_path):
     reopened = LongTermMemoryStore(path)
 
     assert reopened.removed_unsafe_on_startup == 1
-    assert reopened.count() == 0
+    assert reopened.count("user-1") == 0
 
 
 def test_runtime_shares_one_policy_across_extractor_and_store(settings, embeddings):

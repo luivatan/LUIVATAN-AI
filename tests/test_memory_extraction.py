@@ -102,7 +102,7 @@ def test_extraction_is_ephemeral_and_never_writes_the_memory_store(tmp_path):
     candidates = extractor.extract("I prefer answers with examples.")
 
     assert len(candidates) == 1
-    assert store.count() == 0
+    assert store.count("user-1") == 0
 
 
 def test_runtime_exposes_extractor_without_connecting_it_to_chat(settings, embeddings):
@@ -115,4 +115,5 @@ def test_runtime_exposes_extractor_without_connecting_it_to_chat(settings, embed
 
     assert isinstance(services.memory_extractor, MemoryCandidateExtractor)
     assert services.long_term_memory is not None
-    assert services.long_term_memory.count() == 0
+    assert services.default_local_user is not None
+    assert services.long_term_memory.count(services.default_local_user.id) == 0
