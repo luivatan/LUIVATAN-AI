@@ -135,6 +135,7 @@ class Settings:
     history_char_limit: int = 2400  # strict total conversation-context budget
     history_message_char_limit: int = 1000  # strict limit per prior message
     memory_prompt_use: bool = True  # Phase 47: inject relevant confirmed memory into prompts
+    conversation_summary: bool = False  # Phase 50: summarize turns that fall out of context (extra LLM call)
 
     # --- web application ---------------------------------------------------
     max_upload_mb: int = 50
@@ -332,6 +333,7 @@ def load_settings() -> Settings:
             ),
         ),
         memory_prompt_use=_bool(_env("APEX_MEMORY_PROMPT_USE", default=""), True),
+        conversation_summary=_bool(_env("APEX_CONVERSATION_SUMMARY", default=""), False),
         max_upload_mb=max(1, _int(_env("APEX_MAX_UPLOAD_MB", default="50"), 50)),
         rag_debug=_bool(_env("APEX_RAG_DEBUG", default=""), False),
         server_name=_env("APEX_SERVER_NAME", default="127.0.0.1"),

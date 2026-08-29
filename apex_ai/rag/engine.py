@@ -85,6 +85,7 @@ class PreparedTurn:
     history: list[dict] = field(default_factory=list)
     conversation_context: ConversationContext | None = None
     memory_text: str = ""
+    summary_text: str = ""
     confidence: float = 0.0
     lexical_support: float = 0.0
     exact_anchor_support: float = 0.0
@@ -111,6 +112,7 @@ class PreparedTurn:
                 else None
             ),
             "memory_text": self.memory_text or None,
+            "summary_text": self.summary_text or None,
             "reranked_evidence": [
                 {
                     "rank": rank,
@@ -285,6 +287,23 @@ class RagEngine:
         turn.timings["conversation_context"] = round(
             (time.perf_counter() - history_stage) * 1000, 3
         )
+
+        # Phase 50: an optional summary of turns older than what conversation_context
+        # shows in full. Duck-typed like ``memory.recent()``/``memory.add()`` above —
+        # only ConversationMemoryAdapter (the SQLite-backed web chat memory) currently
+        # implements it; the legacy JSON ConversationMemory does not, and is skipped.
+        if use_memory and self.memory is not None:
+            summary_getter = getattr(self.memory, "summary_text", None)
+            if callable(summary_getter):
+                try:
+                    turn.summary_text = summary_getter() or ""
+                except Exception as error:  # noqa: BLE001 - optional continuity boundary
+                    turn.errors.append(f"summary: {type(error).__name__}: {error}")
+                    log.warning(
+                        "Conversation-summary lookup failed; continuing without it "
+                        "(error_type=%s)",
+                        type(error).__name__,
+                    )
 
         memory_stage = time.perf_counter()
         if use_memory and self.long_term_memory and getattr(
@@ -550,6 +569,7 @@ class RagEngine:
                 medical=self.medical_mode,
                 history_text=turn.conversation_context.text,
                 memory_text=turn.memory_text,
+                summary_text=turn.summary_text,
             )
             generation_started = time.perf_counter()
             try:
@@ -619,6 +639,7 @@ class RagEngine:
             medical=self.medical_mode,
             history_text=turn.conversation_context.text,
             memory_text=turn.memory_text,
+            summary_text=turn.summary_text,
         )
         generation_started = time.perf_counter()
         try:
@@ -663,6 +684,7 @@ class RagEngine:
             medical=self.medical_mode,
             history_text=turn.conversation_context.text,
             memory_text=turn.memory_text,
+            summary_text=turn.summary_text,
         )
         generation_started = time.perf_counter()
         parts: list[str] = []

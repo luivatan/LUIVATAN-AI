@@ -65,6 +65,13 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   block — never document evidence, never a citation source.
 - **Memory management** — a Settings panel lists every confirmed memory with delete and
   clear-all controls, backed directly by the same store (not the proposal workflow).
+- **Memory conflict warnings** — a new memory candidate that looks like it may
+  contradict an existing one of the same kind is flagged on the confirmation card;
+  nothing is auto-deleted or overwritten, the user decides.
+- **Long-conversation summaries** (opt-in, `APEX_CONVERSATION_SUMMARY=1`) — turns that
+  fall out of the live short-term window get folded into a rolling per-conversation
+  summary instead of silently disappearing, added to the prompt the same way
+  conversation history is: context only, never evidence, never cited.
 - **Memory safety at the storage boundary** — candidates and every long-term-memory
   create/update are screened locally for labeled credentials, known token/key formats,
   likely opaque secrets, and unnecessary sensitive identifiers. Findings never echo the
@@ -231,6 +238,7 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_HISTORY_CHAR_LIMIT` | `2400` | strict total short-term conversation-context budget |
 | `APEX_HISTORY_MESSAGE_CHAR_LIMIT` | `1000` | strict limit for each prior user/assistant message |
 | `APEX_MEMORY_PROMPT_USE` | `1` | inject relevance-filtered confirmed long-term memory into prompts (Phase 47) |
+| `APEX_CONVERSATION_SUMMARY` | `0` | summarize turns that fall out of the live short-term window (Phase 50; extra LLM call) |
 | `APEX_RAG_DEBUG` | `0` | add developer-only trace route when explicitly enabled |
 | `APEX_CHUNK_SIZE` / `_OVERLAP` / `_MIN` / `_MAX` | 1000/150/200/1600 | chunking |
 | `APEX_DATABASE_PATH` | `data/chroma` | vector store location |

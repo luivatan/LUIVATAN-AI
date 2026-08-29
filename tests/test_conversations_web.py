@@ -294,6 +294,79 @@ def test_unsafe_memory_candidate_is_never_offered(web_client, web_services):
     assert web_services.long_term_memory.count() == 0
 
 
+def test_conversation_summary_folds_old_turns_and_reaches_later_prompts(
+    web_client, web_services
+):
+    """Phase 50: off by default (proven by the companion test below); when
+    enabled, turns that fall out of the live short-term window get folded into
+    a rolling summary that later turns' prompts can see."""
+    from apex_ai.config.settings import with_overrides
+    from apex_ai.memory.conversations import ConversationStore
+
+    web_services.settings = with_overrides(
+        web_services.settings, conversation_summary=True, memory_turns=1
+    )
+    conversation_id = None
+    for i in range(3):
+        stream = events(
+            web_client.post(
+                "/chat/stream",
+                json={
+                    "question": "What temperature is a fever in adults?",
+                    "conversation_id": conversation_id,
+                    "request_id": f"summary-turn-{i}",
+                },
+            )
+        )
+        conversation_id = stream[0]["conversation"]["id"]
+
+    store = ConversationStore(web_services.settings.conversation_db_path)
+    summary, summarized_count = store.summary_state(conversation_id)
+    assert summary  # FakeLLM's canned response, folded in as the "summary" text
+    assert summarized_count > 0
+
+    # A stored summary is always read into the prompt regardless of whether new
+    # summarization work is currently enabled (only *generating more* summary is
+    # gated by the setting) - turn it off here so this turn's own summarization
+    # pass doesn't overwrite FakeLLM.last_messages before this assertion runs.
+    web_services.settings = with_overrides(web_services.settings, conversation_summary=False)
+    web_client.post(
+        "/chat/stream",
+        json={
+            "question": "What temperature is a fever in adults?",
+            "conversation_id": conversation_id,
+            "request_id": "summary-turn-final",
+        },
+    )
+    prompt = repr(FakeLLM.last_messages)
+    assert "Summary of earlier conversation" in prompt
+
+
+def test_conversation_summary_is_off_by_default(web_client, web_services):
+    from apex_ai.config.settings import with_overrides
+    from apex_ai.memory.conversations import ConversationStore
+
+    web_services.settings = with_overrides(web_services.settings, memory_turns=1)
+    conversation_id = None
+    for i in range(3):
+        stream = events(
+            web_client.post(
+                "/chat/stream",
+                json={
+                    "question": "What temperature is a fever in adults?",
+                    "conversation_id": conversation_id,
+                    "request_id": f"no-summary-turn-{i}",
+                },
+            )
+        )
+        conversation_id = stream[0]["conversation"]["id"]
+
+    store = ConversationStore(web_services.settings.conversation_db_path)
+    summary, summarized_count = store.summary_state(conversation_id)
+    assert summary == ""
+    assert summarized_count == 0
+
+
 def test_memory_candidate_flags_a_conflict_with_an_existing_memory(web_client, web_services):
     """Phase 49: detection only - the existing memory is untouched; a human
     still decides via approve/reject (Phase 45) or delete (Phase 46)."""

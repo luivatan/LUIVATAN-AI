@@ -128,6 +128,24 @@ class ConversationStore:
                     "ALTER TABLE messages ADD COLUMN feedback TEXT "
                     "CHECK(feedback IN ('up','down') OR feedback IS NULL)"
                 )
+            # Phase 50: a rolling summary of turns that have fallen out of the
+            # live short-term context window (see memory/summarization.py),
+            # plus how many messages it already covers so later turns only
+            # summarize what's newly fallen out, not the whole conversation
+            # again. Not part of Conversation.to_dict() / the public API -
+            # this is prompt-construction state, not a user-facing field.
+            conversation_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(conversations)")
+            }
+            if "summary" not in conversation_columns:
+                connection.execute(
+                    "ALTER TABLE conversations ADD COLUMN summary TEXT NOT NULL DEFAULT ''"
+                )
+            if "summarized_message_count" not in conversation_columns:
+                connection.execute(
+                    "ALTER TABLE conversations ADD COLUMN "
+                    "summarized_message_count INTEGER NOT NULL DEFAULT 0"
+                )
 
     def create(self, title: str = "New conversation") -> Conversation:
         conversation_id = str(uuid.uuid4())
@@ -203,6 +221,31 @@ class ConversationStore:
             count = int(connection.execute("SELECT COUNT(*) FROM conversations").fetchone()[0])
             connection.execute("DELETE FROM conversations")
             return count
+
+    def summary_state(self, conversation_id: str) -> tuple[str, int]:
+        """Phase 50: the conversation's rolling summary and how many messages
+        (oldest-first) it already covers. ``("", 0)`` for an unknown or
+        never-summarized conversation."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT summary,summarized_message_count FROM conversations WHERE id=?",
+                (conversation_id,),
+            ).fetchone()
+        if row is None:
+            return "", 0
+        return row["summary"] or "", int(row["summarized_message_count"] or 0)
+
+    def update_summary(
+        self, conversation_id: str, summary: str, summarized_message_count: int
+    ) -> None:
+        """Phase 50: persist a regenerated rolling summary. Does not touch
+        ``updated_at`` — this is prompt-construction bookkeeping, not a change
+        a user made, and must not reorder the conversation list."""
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE conversations SET summary=?,summarized_message_count=? WHERE id=?",
+                (summary, max(0, int(summarized_message_count)), conversation_id),
+            )
 
     def messages(self, conversation_id: str) -> list[Message]:
         with self._connect() as connection:
@@ -382,3 +425,12 @@ class ConversationMemoryAdapter:
         # RagEngine calls memory.add during finalization. The controller writes the
         # richer record (status + citations) after receiving the final result.
         return None
+
+    def summary_text(self) -> str:
+        """Phase 50: the conversation's rolling summary of turns older than
+        what ``recent()`` returns in full. RagEngine duck-types this method
+        (``getattr(..., "summary_text", None)``); implementing it here, and
+        not on the legacy JSON ConversationMemory, scopes summarization to the
+        SQLite-backed web chat this phase targets."""
+        summary, _ = self.store.summary_state(self.conversation_id)
+        return summary

@@ -8,10 +8,10 @@ The system prompt encodes the anti-hallucination contract (spec #15):
 - say when evidence is insufficient,
 - cite with [n] markers matching the numbered context blocks.
 
-Conversation memory and confirmed long-term memory (Phase 47) are each included in
-their own clearly separated section with an explicit instruction that neither is
-evidence. Medical mode adds a safety preamble (informational, not advice, no
-diagnosis).
+Conversation memory, confirmed long-term memory (Phase 47), and an older-turns
+summary (Phase 50) are each included in their own clearly separated section with an
+explicit instruction that none of them is evidence. Medical mode adds a safety
+preamble (informational, not advice, no diagnosis).
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ Rules:
 6. Conversation history helps interpret follow-ups. It is NOT evidence and must never be cited.
 7. Never mention or cite a source that is absent from the retrieved evidence blocks.
 8. User context (if present) is the user's own stated preferences/situation. Use it to shape tone and relevance, never as a factual source, and never cite it.
+9. An earlier-conversation summary (if present) is a compressed record of turns older than what's shown in full. Treat it the same as conversation history: useful for continuity, never evidence, never cited.
 
 Evidence blocks follow the format:
 [n]
@@ -70,6 +71,7 @@ def build_messages(
     *,
     history_text: str | None = None,
     memory_text: str | None = None,
+    summary_text: str | None = None,
 ) -> list[dict]:
     """Build the chat-messages payload for the LLM.
 
@@ -79,8 +81,9 @@ def build_messages(
     does not independently format or budget history twice. ``memory_text``
     (Phase 47) is the relevance-filtered confirmed-memory block, or omitted
     entirely when empty — it never displaces or gets confused with document
-    evidence. Output: list of {"role", "content"} dicts for chat-template
-    providers.
+    evidence. ``summary_text`` (Phase 50) is a rolling summary of turns older
+    than what ``history_text`` shows in full, omitted entirely when empty.
+    Output: list of {"role", "content"} dicts for chat-template providers.
     """
     system = system_prompt or SYSTEM_GROUNDED
     if medical:
@@ -93,8 +96,14 @@ def build_messages(
         if memory_text
         else ""
     )
+    summary_block = (
+        f"Summary of earlier conversation (not evidence, never cite):\n{summary_text}\n\n"
+        if summary_text
+        else ""
+    )
     user_content = (
         f"{memory_block}"
+        f"{summary_block}"
         "Conversation history (context only, not evidence):\n"
         f"{rendered_history}\n\n"
         f"Retrieved evidence:\n{evidence_context}\n\n"

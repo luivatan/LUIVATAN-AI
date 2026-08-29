@@ -32,6 +32,7 @@ from apex_ai.api.schemas import (
 from apex_ai.core.errors import ApexError
 from apex_ai.core.logging import get_logger
 from apex_ai.memory.conversations import ConversationMemoryAdapter, ConversationStore
+from apex_ai.memory.summarization import build_summary_messages, turns_needing_summary
 from apex_ai.rag.engine import RagEngine
 
 log = get_logger("api.chat")
@@ -110,6 +111,62 @@ def _citation_payload(citation) -> dict:
     payload["label"] = citation.label()
     payload["text"] = citation.text
     return payload
+
+
+def _maybe_update_conversation_summary(
+    services, conversations, conversation_id: str, llm_provider
+) -> None:
+    """Phase 50: opportunistically fold turns that just fell out of the live
+    short-term window into the conversation's rolling summary.
+
+    Off unless ``APEX_CONVERSATION_SUMMARY=1`` (extra LLM call — same latency
+    tradeoff Phase 30's optional query rewriting already accepts by defaulting
+    off). Runs after the assistant message is persisted, on the small fraction
+    of turns where enough messages have accumulated since the last summary;
+    most turns are a cheap no-op check. A failure here must never break the
+    chat turn that triggered it — same optional-component boundary as memory
+    candidate proposal just above.
+
+    ``llm_provider`` is the exact provider this turn's answer was generated
+    with (``engine.llm`` from ``_engine_for_conversation``) — not an
+    independently resolved ``services.active_llm()``, which can differ (and
+    can fail outright, e.g. in tests that wire a fake provider directly into
+    the engine without a real model configured in settings).
+    """
+    if not services.settings.conversation_summary:
+        return
+    try:
+        messages = conversations.messages(conversation_id)
+        existing_summary, summarized_count = conversations.summary_state(conversation_id)
+        # memory_turns is counted in turns; approximate the message-count
+        # equivalent of "still live" as two messages (user + assistant) per turn.
+        keep_live_messages = max(0, int(services.settings.memory_turns)) * 2
+        pending = turns_needing_summary(
+            messages,
+            already_summarized_count=summarized_count,
+            keep_live_messages=keep_live_messages,
+        )
+        if pending is None:
+            return
+        if not pending.turns_text:
+            conversations.update_summary(
+                conversation_id, existing_summary, pending.through_message_count
+            )
+            return
+        summary_messages = build_summary_messages(existing_summary, pending.turns_text)
+        new_summary = llm_provider.generate(
+            messages=summary_messages, max_tokens=300, temperature=0.2
+        )
+        new_summary = (new_summary or "").strip()
+        if new_summary:
+            conversations.update_summary(
+                conversation_id, new_summary, pending.through_message_count
+            )
+    except Exception as error:  # noqa: BLE001 - optional continuity boundary
+        log.warning(
+            "Conversation summarization failed; continuing without it (error_type=%s)",
+            type(error).__name__,
+        )
 
 
 def _candidate_payload(candidate, confirmation_service) -> dict:
@@ -297,6 +354,9 @@ def create_chat_router(
                         conversation.id, "assistant", answer, citations=citations
                     )
                     persisted = True
+                    _maybe_update_conversation_summary(
+                        services, conversations, conversation.id, engine.llm
+                    )
                     yield _event(
                         "final",
                         message=message.to_dict(),
