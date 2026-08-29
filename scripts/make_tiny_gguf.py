@@ -14,8 +14,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import numpy as np
 import gguf
+import numpy as np
 
 SPECIAL = ["<s>", "</s>", "<unk>"]
 WORDS = [
@@ -40,8 +40,9 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(42)
 
+    # GGUFWriter records general.architecture from its ``arch`` argument.
+    # Calling add_architecture() again duplicates that key on current gguf.
     writer = gguf.GGUFWriter(str(out), "llama")
-    writer.add_architecture()
     writer.add_block_count(N_LAYER)
     writer.add_context_length(256)
     writer.add_embedding_length(N_EMBD)

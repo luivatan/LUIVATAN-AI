@@ -1,37 +1,41 @@
-# Apex AI — core dependencies (offline-first RAG assistant)
+# Apex AI — runtime dependencies (Python 3.10+)
 #
 # Install:            pip install -r requirements.txt
 # Development:        pip install -r requirements-dev.txt
 # GPU acceleration:   see requirements-gpu.txt
 #
-# The previous requirements.txt was a raw `pip freeze` dump (150 pins,
-# machine-local packages like `my-custom-module`, CUDA wheels, unused
-# langchain/langgraph/kubernetes) that could not install on a new machine.
-# These are the packages the application actually imports.
+# These are compatible release ranges, not a cross-platform lock file. Direct
+# runtime imports, runtime-discovered plugins, and supported entry points are
+# declared explicitly. Upper bounds prevent unreviewed major-version migrations.
 
 # --- document processing -------------------------------------------------
 pypdf>=4.0,<7            # PDF text extraction with page numbers
 
 # --- embeddings -----------------------------------------------------------
-sentence-transformers>=3.0,<6   # all-MiniLM-L6-v2 by default (downloads once, then offline)
+# Major 6 has migration requirements that need a separate model-level review.
+sentence-transformers>=3.0,<6   # default embeddings and optional cross-encoder reranker
+huggingface-hub>=0.23,<2        # explicit offline/cache policy integration
 
-# --- vector database --------------------------------------------------------
-chromadb>=1.0,<2         # persistent local vector store
+# --- vector database ------------------------------------------------------
+# Embedded PersistentClient only; never expose Chroma's Python API server.
+chromadb>=1.0,<2          # local persistent vector store
 
-# --- retrieval ----------------------------------------------------------------
-rank-bm25>=0.2.2         # keyword/BM25 stage of hybrid retrieval
+# --- retrieval ------------------------------------------------------------
+rank-bm25>=0.2.2,<0.3     # keyword/BM25 stage of hybrid retrieval
 
-# --- LLM inference ------------------------------------------------------------
-llama-cpp-python>=0.3,<0.4   # local GGUF inference (compiles on first install; see README)
-requests>=2.31           # Ollama / OpenAI-compatible HTTP providers
+# --- LLM providers --------------------------------------------------------
+llama-cpp-python>=0.3,<0.4  # default local GGUF provider; native build (see README)
+requests>=2.31,<3           # Ollama / OpenAI-compatible HTTP providers
+transformers>=4.41,<6       # optional local Transformers generation provider
+torch>=1.11,<3              # Transformers/Sentence-Transformers execution runtime
 
-# --- UI / API ---------------------------------------------------------------
-gradio>=5.0,<7           # main user interface
-fastapi>=0.110           # optional JSON API (already a Gradio dependency)
-uvicorn>=0.29            # runs the FastAPI app
-pydantic>=2.6            # request/response models
-python-multipart>=0.0.9  # streamed browser file uploads
+# --- UI / API -------------------------------------------------------------
+gradio>=5.0,<7             # preserved legacy Gradio entry point
+fastapi>=0.133,<1           # primary web application and JSON/streaming API
+starlette>=1.2,<2            # response primitives and httpx2-capable TestClient
+uvicorn>=0.29,<1            # ASGI server used by the web entry points
+pydantic>=2.6,<3            # API request/response validation
+python-multipart>=0.0.18,<1 # streamed browser file uploads
 
-# --- configuration & utilities ----------------------------------------------
-python-dotenv>=1.0       # .env file loading
-numpy>=1.26
+# --- configuration -------------------------------------------------------
+python-dotenv>=1.0,<2       # load untracked .env configuration files

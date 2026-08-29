@@ -1,19 +1,39 @@
-# Apex AI — optional GPU acceleration
+# Apex AI — optional llama-cpp-python GPU installation guidance
 #
-# By default Apex AI runs the LLM on CPU (APEX_N_GPU_LAYERS=0) and degrades
-# gracefully when no GPU exists. To offload layers to an NVIDIA GPU:
+# This file intentionally contains instructions instead of a portable pip
+# requirement: the correct wheel index/build flag depends on the host GPU,
+# driver, CUDA/toolkit version, operating system, architecture, and Python.
+# The normal requirements.txt installation is CPU-capable by default.
 #
-#   1. Install a CUDA-enabled llama.cpp build (choose ONE):
+# Choose ONE upstream-supported installation route and verify it for the host.
+# If replacing the CPU build, --force-reinstall and --no-cache-dir prevent pip
+# from silently reusing that cached wheel.
 #
-#      # Prebuilt CUDA wheel (fastest path, CUDA 12.1):
-#      pip install llama-cpp-python \
-#        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
+# NVIDIA CUDA prebuilt wheel (replace <cuda-version>, for example cu121, with
+# a version actually supported by both the host and the upstream wheel index):
 #
-#      # Or build from source (needs CUDA toolkit + C compiler):
-#      CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --no-cache-dir
+#   pip install --force-reinstall --no-cache-dir \
+#     'llama-cpp-python>=0.3,<0.4' \
+#     --extra-index-url \
+#     https://abetlen.github.io/llama-cpp-python/whl/<cuda-version>
 #
-#   2. Set the layer offload in .env:
-#      APEX_N_GPU_LAYERS=-1        # offload all layers (-1) or a number (e.g. 16)
+# NVIDIA CUDA source build (requires a compiler, CMake, and matching toolkit):
 #
-# Embeddings also use the GPU automatically when torch sees your CUDA device.
-# No configuration is needed for CPU-only machines.
+#   CMAKE_ARGS="-DGGML_CUDA=on" \
+#     pip install --force-reinstall --no-cache-dir 'llama-cpp-python>=0.3,<0.4'
+#
+# Other upstream backends, including Metal, ROCm/HIP, Vulkan, and SYCL, use
+# different indexes or CMake flags. Follow the current upstream instructions
+# rather than copying a CUDA command to incompatible hardware.
+#
+# After installing an accelerated build, opt into layer offload in .env:
+#
+#   APEX_N_GPU_LAYERS=-1   # all layers, or use a measured smaller number
+#
+# Sentence-Transformers uses an available torch accelerator automatically.
+# Select a host-compatible torch build with the official platform selector:
+# https://pytorch.org/get-started/locally/
+#
+# Verify the installed backends on the target host before enabling offload;
+# successful package installation alone does not prove GPU execution.
+# No GPU is required; CPU-only operation remains supported.
