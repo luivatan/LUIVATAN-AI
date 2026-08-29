@@ -54,6 +54,14 @@ class StopOut(BaseModel):
     stopping: bool
 
 
+class LongTermMemoryOut(BaseModel):
+    id: str
+    kind: str
+    content: str
+    created_at: str
+    updated_at: str
+
+
 class MemoryCandidateOut(BaseModel):
     id: str
     kind: str
@@ -179,6 +187,7 @@ __all__ = [
     "HealthOut",
     "IngestOut",
     "LlmStatusOut",
+    "LongTermMemoryOut",
     "LongTermMemoryStatusOut",
     "MemoryCandidateOut",
     "MessageOut",

@@ -341,6 +341,7 @@ function showView(name) {
   if (name === "chat") $("#topbarTitle").textContent = state.currentConversation?.title || "New conversation";
   else $("#topbarTitle").textContent = name[0].toUpperCase() + name.slice(1);
   if (name === "documents") loadDocuments();
+  if (name === "settings") loadMemories();
   closeMobileSidebar();
 }
 
@@ -786,6 +787,35 @@ function confirmAction(title, text, actionLabel) {
   });
 }
 
+async function loadMemories() {
+  try {
+    const memories = await api("/memory");
+    const list = $("#memoryList"); list.replaceChildren();
+    if (!memories.length) { list.innerHTML = '<div class="memory-empty">No saved memory yet. Approve a “Remember” suggestion from chat to see it here.</div>'; return; }
+    memories.forEach(item => {
+      const row = document.createElement("div"); row.className = "memory-row";
+      row.innerHTML = `<span class="memory-kind">${item.kind === "preference" ? "Preference" : "Context"}</span><span class="memory-content"></span><button class="delete-memory" title="Delete">${icons.trash}</button>`;
+      $(".memory-content", row).textContent = item.content;
+      $(".delete-memory", row).addEventListener("click", () => deleteMemory(item));
+      list.append(row);
+    });
+  } catch (error) { $("#memoryList").innerHTML = `<div class="memory-empty">${escapeHTML(errorMessage(error))}</div>`; }
+}
+
+async function deleteMemory(memory) {
+  const accepted = await confirmAction("Delete this memory?", `“${memory.content}” will be permanently removed.`, "Delete memory");
+  if (!accepted) return;
+  try { await api(`/memory/${memory.id}`, { method: "DELETE" }); toast("Memory deleted.", "success"); await loadMemories(); }
+  catch (error) { toast(errorMessage(error), "error"); }
+}
+
+async function clearAllMemories() {
+  const accepted = await confirmAction("Clear all memory?", "Every saved preference and context item will be permanently removed. Conversations are not affected.", "Clear all");
+  if (!accepted) return;
+  try { await api("/memory", { method: "DELETE" }); toast("All memory cleared.", "success"); await loadMemories(); }
+  catch (error) { toast(errorMessage(error), "error"); }
+}
+
 async function deleteAllConversations() {
   const accepted = await confirmAction("Delete all conversations?", "Every saved conversation and message will be permanently removed. Indexed documents are not affected.", "Delete all");
   if (!accepted) return;
@@ -810,6 +840,7 @@ function bindEvents() {
   $("#fileInput").addEventListener("change", event => { const files = [...event.target.files]; event.target.value = ""; if (event.target.dataset.mode === "documents") uploadDocumentPage(files); else queueFiles(files); });
   $("#refreshDocuments").addEventListener("click", loadDocuments); $("#closeSource").addEventListener("click", closeSource);
   $("#deleteAllConversations").addEventListener("click", deleteAllConversations);
+  $("#clearAllMemories").addEventListener("click", clearAllMemories);
   $("#enterToSend").checked = state.preferences.enterToSend; $("#autoScroll").checked = state.preferences.autoScroll; $("#useMemory").checked = state.preferences.useMemory;
   [["enterToSend", "enterToSend"], ["autoScroll", "autoScroll"], ["useMemory", "useMemory"]].forEach(([id, key]) => $("#" + id).addEventListener("change", event => { state.preferences[key] = event.target.checked; localStorage.setItem(`apex.${key}`, String(event.target.checked)); }));
   let searchTimer; $("#conversationSearch").addEventListener("input", event => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadConversations(event.target.value), 180); });

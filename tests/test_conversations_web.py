@@ -164,6 +164,10 @@ def test_static_assets_include_responsive_themes_and_code_blocks(web_client):
     # Phase 17: per-message feedback controls, alongside copy/regenerate.
     assert "feedback-up" in javascript.text and "feedback-down" in javascript.text
     assert "/feedback" in javascript.text
+    # Phase 46: memory management (view/delete/clear) in Settings.
+    assert ".memory-row" in css.text
+    assert "function loadMemories" in javascript.text
+    assert "clearAllMemories" in javascript.text
 
 
 def test_streaming_chat_uses_real_engine_and_persists_verified_citations(web_client):
@@ -276,6 +280,44 @@ def test_unsafe_memory_candidate_is_never_offered(web_client, web_services):
     assert stream[0]["memory_candidates"] == []
     assert web_services.long_term_memory.pending() == []
     assert web_services.long_term_memory.count() == 0
+
+
+def test_memory_management_list_delete_and_clear(web_client, web_services):
+    """Phase 46: confirmed-memory CRUD is a direct store operation, not routed
+    through candidate proposal/approval."""
+    first = web_services.long_term_memory.create("Prefers concise answers.", kind="preference")
+    web_services.long_term_memory.create("Working on a Q3 budget review.", kind="ongoing_context")
+
+    listed = web_client.get("/memory").json()
+    assert {item["content"] for item in listed} == {
+        "Prefers concise answers.",
+        "Working on a Q3 budget review.",
+    }
+
+    only_preferences = web_client.get("/memory", params={"kind": "preference"}).json()
+    assert [item["content"] for item in only_preferences] == ["Prefers concise answers."]
+
+    deleted = web_client.delete(f"/memory/{first.id}")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True}
+    assert web_client.delete(f"/memory/{first.id}").status_code == 404
+
+    cleared = web_client.delete("/memory")
+    assert cleared.json() == {"deleted": 1}
+    assert web_client.get("/memory").json() == []
+
+
+def test_memory_management_degrades_when_optional_store_is_unavailable(settings):
+    from fastapi.testclient import TestClient
+
+    from apex_ai.api.server import create_api
+    from apex_ai.runtime import ApexServices
+
+    broken = ApexServices(settings=settings, startup_error="MODEL NOT FOUND")
+    client = TestClient(create_api(broken, include_web=False))
+    assert client.get("/memory").status_code == 503
+    assert client.delete("/memory/anything").status_code == 503
+    assert client.delete("/memory").status_code == 503
 
 
 def test_candidate_failure_does_not_interrupt_chat(
