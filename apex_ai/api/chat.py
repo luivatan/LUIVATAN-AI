@@ -26,6 +26,7 @@ from apex_ai.api.schemas import (
     ConversationDetailOut,
     ConversationOut,
     DeletedOut,
+    MessageOut,
     StopOut,
 )
 from apex_ai.core.errors import ApexError
@@ -54,6 +55,10 @@ class ChatStreamRequest(BaseModel):
 
 class StopRequest(BaseModel):
     request_id: str = Field(min_length=1, max_length=100)
+
+
+class MessageFeedback(BaseModel):
+    feedback: str | None = Field(default=None, pattern=r"^(up|down)$")
 
 
 @dataclass
@@ -162,6 +167,22 @@ def create_chat_router(
         if not conversations.delete(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found.")
         return {"deleted": True}
+
+    @router.post(
+        "/conversations/{conversation_id}/messages/{message_id}/feedback",
+        response_model=MessageOut,
+    )
+    def set_message_feedback(conversation_id: str, message_id: str, payload: MessageFeedback):
+        """Local up/down reaction to one assistant message (Phase 17 response
+        action). Not aggregated, not sent anywhere, not used by generation."""
+        try:
+            return conversations.set_feedback(
+                conversation_id, message_id, payload.feedback
+            ).to_dict()
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Message not found.") from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @router.post("/chat/stop", response_model=StopOut)
     def stop_generation(payload: StopRequest):

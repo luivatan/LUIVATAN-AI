@@ -154,6 +154,16 @@ def test_static_assets_include_responsive_themes_and_code_blocks(web_client):
     assert ".memory-confirmation-card" in css.text
     assert "/memory/candidates/" in javascript.text
     assert "Review first · never save secrets" in javascript.text
+    # Phase 15: Markdown tables.
+    assert "table-wrap" in css.text
+    assert "isTableSeparator" in javascript.text
+    # Phase 16: dependency-free syntax highlighting (no CDN script for the product UI).
+    assert "tok-keyword" in css.text
+    assert "function highlightCode" in javascript.text
+    assert "cdn." not in javascript.text.lower()  # no CDN script loaded for the product UI
+    # Phase 17: per-message feedback controls, alongside copy/regenerate.
+    assert "feedback-up" in javascript.text and "feedback-down" in javascript.text
+    assert "/feedback" in javascript.text
 
 
 def test_streaming_chat_uses_real_engine_and_persists_verified_citations(web_client):
@@ -360,6 +370,44 @@ def test_conversation_rename_search_delete_and_clear(web_client):
     assert web_client.delete(f"/conversations/{created['id']}").status_code == 200
     web_client.post("/conversations", json={"title": "One"})
     assert web_client.delete("/conversations").json()["deleted"] == 1
+
+
+def test_message_feedback_set_toggle_and_clear(web_client):
+    stream = events(
+        web_client.post(
+            "/chat/stream",
+            json={"question": "What temperature is a fever in adults?", "request_id": "fb-1"},
+        )
+    )
+    final = next(item for item in stream if item["type"] == "final")
+    conversation_id = final["conversation"]["id"]
+    message_id = final["message"]["id"]
+
+    up = web_client.post(f"/conversations/{conversation_id}/messages/{message_id}/feedback", json={"feedback": "up"})
+    assert up.status_code == 200
+    assert up.json()["feedback"] == "up"
+
+    down = web_client.post(f"/conversations/{conversation_id}/messages/{message_id}/feedback", json={"feedback": "down"})
+    assert down.json()["feedback"] == "down"
+
+    cleared = web_client.post(f"/conversations/{conversation_id}/messages/{message_id}/feedback", json={})
+    assert cleared.json()["feedback"] is None
+
+    # Persisted, not just returned in the response.
+    saved = web_client.get(f"/conversations/{conversation_id}").json()
+    assert saved["messages"][1]["feedback"] is None
+
+    invalid = web_client.post(f"/conversations/{conversation_id}/messages/{message_id}/feedback", json={"feedback": "sideways"})
+    assert invalid.status_code == 422
+
+    missing = web_client.post(f"/conversations/{conversation_id}/messages/does-not-exist/feedback", json={"feedback": "up"})
+    assert missing.status_code == 404
+
+    user_message_id = saved["messages"][0]["id"]
+    on_user_message = web_client.post(
+        f"/conversations/{conversation_id}/messages/{user_message_id}/feedback", json={"feedback": "up"}
+    )
+    assert on_user_message.status_code == 404
 
 
 def test_browser_upload_connects_to_existing_ingestion_pipeline(web_client):

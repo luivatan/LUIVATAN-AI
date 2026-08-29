@@ -72,12 +72,13 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   actual configured model response and real sources without writing memory. Ordinary
   chat payloads never contain candidate text.
 - **Chat-first web application** — a polished ChatGPT-style interface with persistent
-  conversations, history search, true token streaming, stop/regenerate/copy actions,
-  attachments, drag-and-drop ingestion, model selection, source drawer, responsive
-  mobile layout, and light/dark/system themes.
-- **Safe Markdown and code rendering** — generated HTML is allowlisted/escaped, fenced
-  code blocks have copy controls, and a strict same-origin Content Security Policy is
-  applied.
+  conversations, history search, true token streaming, stop/regenerate/copy/feedback
+  actions, attachments, drag-and-drop ingestion, model selection, source drawer,
+  responsive mobile layout, and light/dark/system themes.
+- **Safe Markdown and code rendering** — generated HTML is allowlisted/escaped;
+  headings, lists, tables, and links render alongside fenced code blocks with
+  dependency-free syntax highlighting and copy controls; a strict same-origin Content
+  Security Policy is applied.
 - **Compatibility interfaces** — the original JSON routes, terminal chat, and preserved
   Gradio interface remain available.
 

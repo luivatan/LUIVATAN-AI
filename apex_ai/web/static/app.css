@@ -169,10 +169,17 @@ html[data-theme="light"] .moon-icon { display: block; }
 .code-copy svg { width: 13px; height: 13px; }
 .code-block pre { margin: 0; padding: 15px 17px; overflow-x: auto; }
 .code-block code { font: 12.5px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; }
+.tok-keyword { color: #ff8fc7; } .tok-string { color: #b7e389; } .tok-comment { color: #7c8695; font-style: italic; } .tok-number { color: #82c8ff; }
+.markdown .table-wrap { margin: 14px 0; overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+.markdown table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.markdown th, .markdown td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.markdown thead th { background: var(--surface-2); font-weight: 650; color: var(--text-2); }
+.markdown tbody tr:last-child td { border-bottom: 0; }
 .message-actions { display: flex; gap: 2px; margin-top: 12px; opacity: 0; transition: opacity .15s; }
 .message:hover .message-actions, .message-actions:focus-within, .message:last-child .message-actions { opacity: 1; }
 .message-action { height: 29px; border: 0; border-radius: 7px; background: transparent; padding: 0 8px; display: flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 10px; }
 .message-action:hover { background: var(--surface-2); color: var(--text); }
+.message-action.active { color: var(--accent); }
 .message-action svg { width: 14px; height: 14px; }
 .message-status { margin-top: 9px; color: var(--warning); font-size: 11px; display: flex; align-items: center; gap: 6px; }
 .citations { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 16px; }

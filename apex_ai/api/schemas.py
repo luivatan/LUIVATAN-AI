@@ -22,6 +22,7 @@ class MessageOut(BaseModel):
     citations: list[dict[str, Any]]
     status: str
     created_at: str
+    feedback: str | None = None
 
 
 class ConversationOut(BaseModel):

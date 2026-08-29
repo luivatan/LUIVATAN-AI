@@ -106,10 +106,26 @@ file.
 ## Markdown security
 
 Assistant Markdown is rendered locally with a small allowlist renderer. Raw HTML is
-escaped first; only headings, emphasis, lists, blockquotes, HTTP(S) links, inline code,
-and fenced code blocks are emitted. This prevents model output from injecting scripts.
-Code blocks are rendered as preformatted text with their own copy button. A strict
-same-origin Content Security Policy blocks remote scripts, frames, plugins, and assets.
+escaped first; only headings, emphasis, lists, blockquotes, tables (Phase 15), HTTP(S)
+links, inline code, and fenced code blocks are emitted. This prevents model output from
+injecting scripts — table cells go through the same escape-then-allowlist pipeline as
+every other Markdown construct (verified directly: a `<script>` tag inside a table cell
+renders as inert escaped text, never a live element).
+
+Code blocks get a small, dependency-free pattern-based syntax highlighter (Phase 16):
+comments/strings/numbers/keywords for a handful of common languages (Python, JS/TS,
+JSON, YAML, Bash, SQL, Java, C/C++, Go, Rust), each behind one alternation regex, not a
+full grammar. An unrecognized language falls back to the prior plain-escaped behavior —
+never a false-colored token. `highlightCode()`/`renderMarkdown()` are pure functions
+with no DOM dependency, so they're covered by a standalone Node harness in addition to
+the Python string-assertion tests in `tests/test_conversations_web.py`.
+
+Code blocks are rendered as preformatted text with their own copy button; the copy
+button reads `textContent`, so the highlighter's `<span>` wrappers never leak into
+copied text. Response actions also include per-message up/down feedback (Phase 17) —
+local-only, persisted per message in `conversations.db`, never aggregated or sent
+anywhere, and not read by generation. A strict same-origin Content Security Policy
+blocks remote scripts, frames, plugins, and assets.
 
 ## Compatibility
 

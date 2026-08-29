@@ -60,6 +60,7 @@ class Message:
     citations: tuple[dict, ...]
     status: str
     created_at: str
+    feedback: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -70,6 +71,7 @@ class Message:
             "citations": list(self.citations),
             "status": self.status,
             "created_at": self.created_at,
+            "feedback": self.feedback,
         }
 
 
@@ -116,6 +118,16 @@ class ConversationStore:
                     ON messages(conversation_id, created_at);
                 """
             )
+            # Phase 17: added after the original schema shipped. SQLite has no
+            # portable "ADD COLUMN IF NOT EXISTS", so check first; this keeps
+            # existing conversations.db files (with real user history) working
+            # without a destructive rebuild.
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(messages)")}
+            if "feedback" not in columns:
+                connection.execute(
+                    "ALTER TABLE messages ADD COLUMN feedback TEXT "
+                    "CHECK(feedback IN ('up','down') OR feedback IS NULL)"
+                )
 
     def create(self, title: str = "New conversation") -> Conversation:
         conversation_id = str(uuid.uuid4())
@@ -246,6 +258,26 @@ class ConversationStore:
             message_id, conversation_id, role, content, tuple(citations or []), status, now
         )
 
+    def set_feedback(
+        self, conversation_id: str, message_id: str, feedback: str | None
+    ) -> Message:
+        """Set (or clear, with ``None``) a user's up/down reaction to one assistant
+        message. Local, per-user signal only — not aggregated or sent anywhere."""
+        if feedback not in {"up", "down", None}:
+            raise ValueError("feedback must be 'up', 'down', or null")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """UPDATE messages SET feedback=?
+                   WHERE id=? AND conversation_id=? AND role='assistant'""",
+                (feedback, message_id, conversation_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(message_id)
+            row = connection.execute(
+                "SELECT * FROM messages WHERE id=?", (message_id,)
+            ).fetchone()
+        return self._message(row)
+
     def last_user_message(self, conversation_id: str) -> Message | None:
         with self._connect() as connection:
             row = connection.execute(
@@ -306,6 +338,7 @@ class ConversationStore:
             citations = json.loads(row["citations_json"] or "[]")
         except json.JSONDecodeError:
             citations = []
+        keys = set(row.keys())
         return Message(
             id=row["id"],
             conversation_id=row["conversation_id"],
@@ -314,6 +347,7 @@ class ConversationStore:
             citations=tuple(citations if isinstance(citations, list) else []),
             status=row["status"],
             created_at=row["created_at"],
+            feedback=row["feedback"] if "feedback" in keys else None,
         )
 
 

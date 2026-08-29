@@ -30,6 +30,8 @@ const icons = {
   edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 5 5 5M4 20l4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10z"/></svg>',
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>',
   file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l4 4v16H6zM14 2v5h5"/></svg>',
+  thumbUp: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 22V11l5-8 1.5 1L12 11h7a2 2 0 0 1 2 2.4l-1.6 7A2 2 0 0 1 17.4 22H7Z"/><path d="M7 22H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h3"/></svg>',
+  thumbDown: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2v11l-5 8-1.5-1L12 13H5a2 2 0 0 1-2-2.4l1.6-7A2 2 0 0 1 6.6 2H17Z"/><path d="M17 2h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-3"/></svg>',
 };
 
 const GENERIC_ERROR_MESSAGE = "Apex AI could not complete that action. Try again.";
@@ -131,12 +133,64 @@ function safeLink(url) {
   } catch (_) { return "#"; }
 }
 
+// Phase 16: a small, dependency-free syntax highlighter. This is deliberately not a
+// full-grammar tokenizer (no CDN library is loaded for the product UI — see
+// docs/CHAT_INTERFACE_ARCHITECTURE.md). It recognizes comments/strings/numbers/keywords
+// for a handful of common languages via one alternation regex per language and falls
+// back to plain (still safely escaped) text for anything it doesn't recognize, which is
+// exactly the prior behavior — so an unrecognized language never regresses.
+const CSTYLE_COMMENT = /\/\/[^\n]*|\/\*[\s\S]*?\*\//;
+const HASH_COMMENT = /#[^\n]*/;
+const DASH_COMMENT = /--[^\n]*/;
+const LANG_SYNTAX = {
+  javascript: { comment: CSTYLE_COMMENT, keywords: new Set(["function", "const", "let", "var", "return", "if", "else", "for", "while", "in", "of", "class", "extends", "new", "this", "try", "catch", "finally", "throw", "import", "export", "default", "from", "async", "await", "yield", "typeof", "instanceof", "null", "true", "false", "undefined", "break", "continue", "switch", "case", "static", "get", "set", "void", "delete", "do"]) },
+  python: { comment: HASH_COMMENT, keywords: new Set(["def", "class", "import", "from", "return", "if", "elif", "else", "for", "while", "in", "not", "and", "or", "try", "except", "finally", "with", "as", "pass", "break", "continue", "lambda", "yield", "None", "True", "False", "self", "raise", "async", "await", "global", "nonlocal", "assert", "del", "is"]) },
+  bash: { comment: HASH_COMMENT, keywords: new Set(["if", "then", "else", "elif", "fi", "for", "do", "done", "while", "case", "esac", "function", "export", "local", "return", "echo", "in"]) },
+  sql: { comment: DASH_COMMENT, caseInsensitiveKeywords: true, keywords: new Set(["select", "from", "where", "insert", "into", "values", "update", "set", "delete", "join", "left", "right", "inner", "outer", "on", "group", "by", "order", "having", "limit", "create", "table", "alter", "drop", "and", "or", "not", "null", "as", "distinct", "union", "all"]) },
+  java: { comment: CSTYLE_COMMENT, keywords: new Set(["public", "private", "protected", "class", "interface", "extends", "implements", "static", "final", "void", "new", "return", "if", "else", "for", "while", "do", "try", "catch", "finally", "throw", "throws", "import", "package", "this", "super", "true", "false", "null", "break", "continue", "switch", "case", "default"]) },
+  c: { comment: CSTYLE_COMMENT, keywords: new Set(["int", "char", "float", "double", "void", "struct", "typedef", "return", "if", "else", "for", "while", "do", "switch", "case", "default", "break", "continue", "static", "const", "unsigned", "signed", "sizeof", "include", "define", "null", "NULL"]) },
+  go: { comment: CSTYLE_COMMENT, keywords: new Set(["func", "package", "import", "var", "const", "type", "struct", "interface", "return", "if", "else", "for", "range", "switch", "case", "default", "go", "chan", "select", "defer", "map", "break", "continue", "true", "false", "nil"]) },
+  rust: { comment: CSTYLE_COMMENT, keywords: new Set(["fn", "let", "mut", "const", "struct", "enum", "impl", "trait", "pub", "use", "mod", "return", "if", "else", "for", "while", "loop", "match", "break", "continue", "true", "false", "self", "Self", "async", "await", "move", "ref", "where"]) },
+  json: { comment: null, keywords: new Set(["true", "false", "null"]) },
+  yaml: { comment: HASH_COMMENT, keywords: new Set(["true", "false", "null"]) },
+};
+LANG_SYNTAX.typescript = { comment: CSTYLE_COMMENT, keywords: new Set([...LANG_SYNTAX.javascript.keywords, "interface", "type", "enum", "implements", "public", "private", "protected", "readonly", "namespace", "as", "satisfies"]) };
+LANG_SYNTAX.cpp = LANG_SYNTAX.c;
+const LANG_ALIASES = { js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript", ts: "typescript", tsx: "typescript", py: "python", py3: "python", sh: "bash", shell: "bash", zsh: "bash", yml: "yaml", "c++": "cpp", cc: "cpp", cxx: "cpp", golang: "go", rs: "rust" };
+
+function highlightCode(code, lang) {
+  const spec = LANG_SYNTAX[LANG_ALIASES[lang] || lang];
+  if (!spec) return escapeHTML(code);
+  const parts = [];
+  if (spec.comment) parts.push(spec.comment.source);
+  parts.push('"(?:[^"\\\\\\n]|\\\\.)*"', "'(?:[^'\\\\\\n]|\\\\.)*'", "`(?:[^`\\\\]|\\\\.)*`", "\\b\\d+(?:\\.\\d+)?\\b", "[A-Za-z_$][\\w$]*");
+  const pattern = new RegExp(parts.join("|"), "g");
+  const commentPattern = spec.comment ? new RegExp(`^(?:${spec.comment.source})$`) : null;
+  let out = ""; let last = 0; let match;
+  while ((match = pattern.exec(code)) !== null) {
+    out += escapeHTML(code.slice(last, match.index));
+    const text = match[0];
+    const first = text[0];
+    if (commentPattern && commentPattern.test(text)) out += `<span class="tok-comment">${escapeHTML(text)}</span>`;
+    else if (first === '"' || first === "'" || first === "`") out += `<span class="tok-string">${escapeHTML(text)}</span>`;
+    else if (/^\d/.test(first)) out += `<span class="tok-number">${escapeHTML(text)}</span>`;
+    else {
+      const word = spec.caseInsensitiveKeywords ? text.toLowerCase() : text;
+      out += spec.keywords.has(word) ? `<span class="tok-keyword">${escapeHTML(text)}</span>` : escapeHTML(text);
+    }
+    last = match.index + text.length;
+  }
+  out += escapeHTML(code.slice(last));
+  return out;
+}
+
 function renderMarkdown(source = "") {
   const codeBlocks = [];
   let text = String(source).replace(/```([^\n`]*)\n?([\s\S]*?)```/g, (_, language, code) => {
     const index = codeBlocks.length;
     const lang = (language.trim().match(/^[\w.+#-]{0,24}$/) || [""])[0] || "code";
-    codeBlocks.push(`<div class="code-block"><div class="code-header"><span>${escapeHTML(lang)}</span><button class="code-copy" type="button">${icons.copy}<span>Copy code</span></button></div><pre><code>${escapeHTML(code.replace(/\n$/, ""))}</code></pre></div>`);
+    const body = code.replace(/\n$/, "");
+    codeBlocks.push(`<div class="code-block"><div class="code-header"><span>${escapeHTML(lang)}</span><button class="code-copy" type="button">${icons.copy}<span>Copy code</span></button></div><pre><code>${highlightCode(body, lang.toLowerCase())}</code></pre></div>`);
     return `\nAPEXCODEBLOCK${index}TOKEN\n`;
   });
 
@@ -158,12 +212,35 @@ function renderMarkdown(source = "") {
   const output = [];
   let list = null;
   const closeList = () => { if (list) { output.push(`</${list}>`); list = null; } };
-  for (const raw of lines) {
-    const line = raw.trimEnd();
+  // Phase 15: GFM-style pipe tables. A table is a header row immediately followed by a
+  // separator row of dashes/colons; this needs one line of lookahead, which is why this
+  // loop is index-based rather than a plain for..of like the rest of the parser below.
+  const isTableSeparator = raw => /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(raw.trim());
+  const splitTableRow = raw => {
+    let row = raw.trim();
+    if (row.startsWith("|")) row = row.slice(1);
+    if (row.endsWith("|")) row = row.slice(0, -1);
+    return row.split("|").map(cell => cell.trim());
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trimEnd();
     if (/^APEXCODEBLOCK\d+TOKEN$/.test(line.trim())) { closeList(); output.push(line.trim()); continue; }
     if (!line.trim()) { closeList(); continue; }
     const heading = line.match(/^(#{1,3})\s+(.+)$/);
     if (heading) { closeList(); const level = heading[1].length; output.push(`<h${level}>${heading[2]}</h${level}>`); continue; }
+    if (line.includes("|") && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+      closeList();
+      const headerCells = splitTableRow(line);
+      output.push(`<div class="table-wrap"><table><thead><tr>${headerCells.map(cell => `<th>${cell}</th>`).join("")}</tr></thead><tbody>`);
+      i += 1; // consume the separator row
+      while (i + 1 < lines.length && lines[i + 1].trim() && lines[i + 1].includes("|") && !isTableSeparator(lines[i + 1])) {
+        i += 1;
+        const cells = splitTableRow(lines[i]);
+        output.push(`<tr>${cells.map(cell => `<td>${cell}</td>`).join("")}</tr>`);
+      }
+      output.push("</tbody></table></div>");
+      continue;
+    }
     const unordered = line.match(/^\s*[-+*]\s+(.+)$/);
     if (unordered) { if (list !== "ul") { closeList(); list = "ul"; output.push("<ul>"); } output.push(`<li>${unordered[1]}</li>`); continue; }
     const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
@@ -418,14 +495,45 @@ function buildMessage(message, index = 0) {
   if (message.role === "user") {
     const content = document.createElement("div"); content.className = "user-content"; content.textContent = message.content; article.append(content); return article;
   }
-  article.innerHTML = `<div class="assistant-avatar">A</div><div class="message-body"><div class="message-author">Apex AI <span></span></div><div class="markdown"></div><div class="citations"></div><div class="message-status"></div><div class="message-actions"><button class="message-action copy-response">${icons.copy}<span>Copy</span></button><button class="message-action regenerate-response">${icons.retry}<span>Regenerate</span></button></div></div>`;
+  article.innerHTML = `<div class="assistant-avatar">A</div><div class="message-body"><div class="message-author">Apex AI <span></span></div><div class="markdown"></div><div class="citations"></div><div class="message-status"></div><div class="message-actions"><button class="message-action copy-response">${icons.copy}<span>Copy</span></button><button class="message-action regenerate-response">${icons.retry}<span>Regenerate</span></button><button class="message-action feedback-up" aria-pressed="false">${icons.thumbUp}<span>Good response</span></button><button class="message-action feedback-down" aria-pressed="false">${icons.thumbDown}<span>Bad response</span></button></div></div>`;
   $(".markdown", article).innerHTML = renderMarkdown(message.content || "");
   const status = $(".message-status", article);
   if (message.status === "stopped") status.textContent = "■ Generation stopped"; else status.remove();
   renderCitations($(".citations", article), message.citations || []);
   $(".copy-response", article).addEventListener("click", event => copyResponse(message.content, event.currentTarget));
   $(".regenerate-response", article).addEventListener("click", () => regenerateResponse());
+  const upButton = $(".feedback-up", article);
+  const downButton = $(".feedback-down", article);
+  if (message.id && message.id !== "streaming") {
+    setFeedbackButtonState(upButton, downButton, message.feedback || null);
+    upButton.addEventListener("click", () => toggleMessageFeedback(message, "up", upButton, downButton));
+    downButton.addEventListener("click", () => toggleMessageFeedback(message, "down", upButton, downButton));
+  } else {
+    upButton.remove(); downButton.remove();
+  }
   return article;
+}
+
+function setFeedbackButtonState(upButton, downButton, feedback) {
+  upButton.classList.toggle("active", feedback === "up"); upButton.setAttribute("aria-pressed", String(feedback === "up"));
+  downButton.classList.toggle("active", feedback === "down"); downButton.setAttribute("aria-pressed", String(feedback === "down"));
+}
+
+async function toggleMessageFeedback(message, value, upButton, downButton) {
+  const next = message.feedback === value ? null : value; // click again to clear
+  const conversationId = state.currentConversation?.id;
+  if (!conversationId) return;
+  try {
+    const updated = await api(`/conversations/${conversationId}/messages/${message.id}/feedback`, {
+      method: "POST", body: JSON.stringify({ feedback: next }),
+    });
+    message.feedback = updated.feedback;
+    const stored = state.messages.find(item => item.id === message.id);
+    if (stored) stored.feedback = updated.feedback;
+    setFeedbackButtonState(upButton, downButton, updated.feedback);
+  } catch (error) {
+    toast(errorMessage(error), "error");
+  }
 }
 
 function createStreamingAssistant() {
