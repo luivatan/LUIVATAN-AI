@@ -32,21 +32,92 @@ const icons = {
   file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l4 4v16H6zM14 2v5h5"/></svg>',
 };
 
+const GENERIC_ERROR_MESSAGE = "Apex AI could not complete that action. Try again.";
+const STATUS_ERROR_MESSAGES = Object.freeze({
+  400: "Check the request and try again.",
+  404: "The requested item was not found.",
+  409: "That action conflicts with the current application state.",
+  413: "The selected file is too large.",
+  415: "That file type is not supported.",
+  422: "Check the submitted fields and try again.",
+  429: "Too many requests were received. Try again later.",
+  500: GENERIC_ERROR_MESSAGE,
+  502: "The configured AI provider could not complete the request. Try again.",
+  503: "Apex AI is temporarily unavailable. Try again or review Settings.",
+});
+
+class ApexAPIError extends Error {
+  constructor(problem = {}, status = 0) {
+    const message = typeof problem.message === "string" && problem.message.trim()
+      ? problem.message : GENERIC_ERROR_MESSAGE;
+    super(message);
+    this.name = "ApexAPIError";
+    this.code = typeof problem.code === "string" ? problem.code : "request_failed";
+    this.status = status;
+    this.retryable = Boolean(problem.retryable);
+    this.fields = Array.isArray(problem.fields) ? problem.fields : [];
+  }
+}
+
+function errorMessage(error, fallback = GENERIC_ERROR_MESSAGE) {
+  return error instanceof ApexAPIError ? error.message : fallback;
+}
+
+function safeLegacyMessage(value, fallback = GENERIC_ERROR_MESSAGE) {
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  const diagnostic = /traceback|\b[A-Z][A-Za-z0-9_.]*(?:Error|Exception)\b/i;
+  const credential = /\b(?:bearer\s+\S+|(?:api[ _-]?key|token|password|secret)\s*[:=]|sk-[A-Za-z0-9_-]{8,})/i;
+  const location = /(?:https?:\/\/|(?:^|[\s`('" ])(?:[A-Za-z]:[\\/]|~?\/|\.\.?\/))/;
+  return diagnostic.test(value) || credential.test(value) || location.test(value) ? fallback : value;
+}
+
+async function errorFromResponse(response) {
+  let payload = null;
+  try { payload = await response.json(); } catch (_) { /* use status fallback */ }
+  if (payload?.error && typeof payload.error === "object") {
+    return new ApexAPIError(payload.error, response.status);
+  }
+  const fallback = STATUS_ERROR_MESSAGES[response.status] || GENERIC_ERROR_MESSAGE;
+  const legacy = response.status < 500
+    ? safeLegacyMessage(payload?.detail, fallback) : fallback;
+  return new ApexAPIError({ code: `http_${response.status}`, message: legacy }, response.status);
+}
+
+function streamErrorFromEvent(event = {}) {
+  const problem = event.error && typeof event.error === "object"
+    ? event.error
+    : { code: "stream_error", message: GENERIC_ERROR_MESSAGE };
+  return new ApexAPIError(problem);
+}
+
+async function request(path, options = {}) {
+  try {
+    return await fetch(path, options);
+  } catch (_) {
+    throw new ApexAPIError({
+      code: "network_error",
+      message: "Apex AI could not be reached. Check the connection and try again.",
+      retryable: true,
+    });
+  }
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await request(path, {
     ...options,
     headers: { ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...(options.headers || {}) },
   });
-  if (!response.ok) {
-    let detail = `${response.status} ${response.statusText}`;
-    try {
-      const payload = await response.json();
-      detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail || payload);
-    } catch (_) { /* preserve status */ }
-    throw new Error(detail);
-  }
+  if (!response.ok) throw await errorFromResponse(response);
   if (response.status === 204) return null;
-  return response.json();
+  try {
+    return await response.json();
+  } catch (_) {
+    throw new ApexAPIError({
+      code: "invalid_response",
+      message: "Apex AI returned an unreadable response. Try again.",
+      retryable: true,
+    }, response.status);
+  }
 }
 
 function escapeHTML(value = "") {
@@ -156,7 +227,7 @@ async function decideMemoryCandidate(candidateId, decision) {
     renderMemoryCandidates();
     toast(decision === "approve" ? "Saved to long-term memory; prompt use is not enabled yet." : "Memory suggestion dismissed.", "success");
   } catch (error) {
-    toast(error.message, "error");
+    toast(errorMessage(error), "error");
     await loadMemoryCandidates();
   }
 }
@@ -216,7 +287,7 @@ async function loadConfig() {
     if (!state.config.ready && state.config.startup_error) toast("The AI backend needs configuration. Open Settings for details.", "error");
   } catch (error) {
     $("#localStatus").className = "local-status error";
-    $("#backendDetails").innerHTML = `<div class="error-message">${escapeHTML(error.message)}</div>`;
+    $("#backendDetails").innerHTML = `<div class="error-message">${escapeHTML(errorMessage(error))}</div>`;
   }
 }
 
@@ -248,7 +319,7 @@ async function selectModel(event) {
     await api("/models/select", { method: "POST", body: JSON.stringify({ name }) });
     toast(`${name} selected. It will load on the next message.`, "success");
     await loadConfig(); await loadModels();
-  } catch (error) { toast(error.message, "error"); await loadModels(); }
+  } catch (error) { toast(errorMessage(error), "error"); await loadModels(); }
   finally { event.target.disabled = false; }
 }
 
@@ -257,7 +328,7 @@ async function loadConversations(search = "") {
     state.conversations = await api(`/conversations?search=${encodeURIComponent(search)}`);
     renderConversationList();
   } catch (error) {
-    $("#conversationList").innerHTML = `<div class="conversation-empty">Could not load conversations.<br>${escapeHTML(error.message)}</div>`;
+    $("#conversationList").innerHTML = `<div class="conversation-empty">Could not load conversations.<br>${escapeHTML(errorMessage(error))}</div>`;
   }
 }
 
@@ -293,7 +364,7 @@ async function openConversation(id) {
     state.messages = conversation.messages;
     showView("chat");
     renderMessages(); renderConversationList(); closeMobileSidebar();
-  } catch (error) { toast(error.message, "error"); }
+  } catch (error) { toast(errorMessage(error), "error"); }
 }
 
 function newChat() {
@@ -310,7 +381,7 @@ async function renameConversation(conversation) {
     const updated = await api(`/conversations/${conversation.id}`, { method: "PATCH", body: JSON.stringify({ title: title.trim() }) });
     if (state.currentConversation?.id === updated.id) state.currentConversation = { ...state.currentConversation, ...updated };
     await loadConversations($("#conversationSearch").value); $("#topbarTitle").textContent = updated.title;
-  } catch (error) { toast(error.message, "error"); }
+  } catch (error) { toast(errorMessage(error), "error"); }
 }
 
 async function deleteConversation(conversation) {
@@ -320,7 +391,7 @@ async function deleteConversation(conversation) {
     await api(`/conversations/${conversation.id}`, { method: "DELETE" });
     if (state.currentConversation?.id === conversation.id) newChat();
     await loadConversations($("#conversationSearch").value); toast("Conversation deleted.", "success");
-  } catch (error) { toast(error.message, "error"); }
+  } catch (error) { toast(errorMessage(error), "error"); }
 }
 
 function renderMessages() {
@@ -457,15 +528,11 @@ async function sendMessage({ regenerate = false } = {}) {
   createStreamingAssistant();
 
   try {
-    const response = await fetch("/chat/stream", {
+    const response = await request("/chat/stream", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question, conversation_id: state.currentConversation?.id || null, request_id: state.requestId, regenerate, use_memory: state.preferences.useMemory }),
     });
-    if (!response.ok) {
-      let detail = `${response.status} ${response.statusText}`;
-      try { detail = (await response.json()).detail || detail; } catch (_) {}
-      throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
-    }
+    if (!response.ok) throw await errorFromResponse(response);
     const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
     while (true) {
       const { value, done } = await reader.read();
@@ -477,7 +544,7 @@ async function sendMessage({ regenerate = false } = {}) {
     if (buffer.trim()) handleStreamEvent(JSON.parse(buffer));
   } catch (error) {
     if (state.activeAssistant) {
-      $(".markdown", state.activeAssistant.element).innerHTML = `<div class="error-message">${escapeHTML(error.message)}</div>`;
+      $(".markdown", state.activeAssistant.element).innerHTML = `<div class="error-message">${escapeHTML(errorMessage(error))}</div>`;
       state.activeAssistant = null;
     }
     toast("The response could not be completed.", "error");
@@ -509,8 +576,9 @@ function handleStreamEvent(event) {
     toast("Generation stopped."); return;
   }
   if (event.type === "error") {
+    const message = errorMessage(streamErrorFromEvent(event));
     if (state.activeAssistant) {
-      $(".markdown", state.activeAssistant.element).innerHTML = `<div class="error-message">${escapeHTML(event.message)}</div>`;
+      $(".markdown", state.activeAssistant.element).innerHTML = `<div class="error-message">${escapeHTML(message)}</div>`;
       state.activeAssistant = null;
     }
     toast("Apex AI reported an error. See the response for details.", "error");
@@ -521,7 +589,7 @@ async function stopGeneration() {
   if (!state.generating || state.stopping) return;
   state.stopping = true; $("#sendButton").disabled = true;
   try { await api("/chat/stop", { method: "POST", body: JSON.stringify({ request_id: state.requestId }) }); }
-  catch (error) { state.stopping = false; $("#sendButton").disabled = false; toast(error.message, "error"); }
+  catch (error) { state.stopping = false; $("#sendButton").disabled = false; toast(errorMessage(error), "error"); }
 }
 function regenerateResponse() {
   if (!state.currentConversation || state.generating) return;
@@ -557,7 +625,7 @@ async function uploadOne(item) {
   try {
     const result = await api("/documents/upload", { method: "POST", body: form });
     item.status = "done"; item.result = result; renderAttachmentTray(); toast(result.message, "success"); return true;
-  } catch (error) { item.status = "error"; item.error = error.message; renderAttachmentTray(); toast(`${item.file.name}: ${error.message}`, "error"); return false; }
+  } catch (error) { item.status = "error"; item.error = errorMessage(error); renderAttachmentTray(); toast(`${item.file.name}: ${errorMessage(error)}`, "error"); return false; }
 }
 
 async function uploadPendingFiles() {
@@ -587,18 +655,18 @@ async function loadDocuments() {
       $(".reindex-doc", row).addEventListener("click", () => reindexDocument(item));
       $(".delete-doc", row).addEventListener("click", () => deleteDocument(item)); library.append(row);
     });
-  } catch (error) { $("#documentLibrary").innerHTML = `<div class="library-empty"><div><strong>Documents unavailable</strong>${escapeHTML(error.message)}</div></div>`; }
+  } catch (error) { $("#documentLibrary").innerHTML = `<div class="library-empty"><div><strong>Documents unavailable</strong>${escapeHTML(errorMessage(error))}</div></div>`; }
 }
 
 async function reindexDocument(document) {
   try { toast(`Re-indexing ${document.name}…`); const result = await api(`/documents/${document.document_id}/reindex`, { method: "POST" }); toast(result.message, "success"); await loadDocuments(); }
-  catch (error) { toast(error.message, "error"); }
+  catch (error) { toast(errorMessage(error), "error"); }
 }
 async function deleteDocument(document) {
   const accepted = await confirmAction("Delete document?", `“${document.name}” and all of its indexed vectors will be removed. Existing conversation text will remain.`, "Delete document");
   if (!accepted) return;
   try { await api(`/documents/${document.document_id}`, { method: "DELETE" }); toast(`${document.name} deleted.`, "success"); await loadDocuments(); await loadConfig(); }
-  catch (error) { toast(error.message, "error"); }
+  catch (error) { toast(errorMessage(error), "error"); }
 }
 
 function confirmAction(title, text, actionLabel) {
@@ -614,7 +682,7 @@ async function deleteAllConversations() {
   const accepted = await confirmAction("Delete all conversations?", "Every saved conversation and message will be permanently removed. Indexed documents are not affected.", "Delete all");
   if (!accepted) return;
   try { await api("/conversations", { method: "DELETE" }); newChat(); await loadConversations(); toast("All conversations deleted.", "success"); }
-  catch (error) { toast(error.message, "error"); }
+  catch (error) { toast(errorMessage(error), "error"); }
 }
 
 function bindEvents() {

@@ -17,6 +17,11 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from apex_ai.api.errors import (
+    internal_error_problem,
+    problem_from_apex,
+    service_not_ready_error,
+)
 from apex_ai.core.errors import ApexError
 from apex_ai.core.logging import get_logger
 from apex_ai.memory.conversations import ConversationMemoryAdapter, ConversationStore
@@ -159,7 +164,7 @@ def create_chat_router(
     @router.post("/chat/stream")
     def stream_chat(payload: ChatStreamRequest):
         if not services.ready:
-            raise HTTPException(status_code=503, detail=services.startup_error)
+            raise service_not_ready_error()
 
         request_id = payload.request_id or str(uuid.uuid4())
         conversation = (
@@ -281,17 +286,12 @@ def create_chat_router(
                 raise
             except ApexError as error:
                 log.warning("Chat request failed: %s", error.title)
-                yield _event("error", message=error.user_message())
-            except Exception as error:
+                problem = problem_from_apex(error)
+                yield _event("error", message=problem["message"], error=problem)
+            except Exception:
                 log.exception("Unexpected streaming chat failure")
-                yield _event(
-                    "error",
-                    message=(
-                        "Apex AI could not finish that response. "
-                        "Technical details were written to logs/apex.log. "
-                        f"({type(error).__name__})"
-                    ),
-                )
+                problem = internal_error_problem()
+                yield _event("error", message=problem["message"], error=problem)
             finally:
                 # A disconnected browser should not make partial generated text look
                 # complete in history. Explicit Stop uses the branch above.

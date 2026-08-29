@@ -14,8 +14,16 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from apex_ai.core.errors import ApexError  # noqa: E402
-from apex_ai.evaluation.runner import EXAMPLE_DATASET, print_report, run_evaluation, save_report  # noqa: E402
+from apex_ai.core.errors import UNEXPECTED_ERROR_MESSAGE, ApexError
+from apex_ai.core.logging import get_logger
+from apex_ai.evaluation.runner import (
+    EXAMPLE_DATASET,
+    print_report,
+    run_evaluation,
+    save_report,
+)
+
+log = get_logger("evaluation.cli")
 
 
 def main() -> int:
@@ -54,12 +62,16 @@ def main() -> int:
             embedding=args.embedding,
             top_k=args.top_k,
         )
+        report_path = save_report(report, PROJECT_ROOT / "eval" / "reports")
+        print_report(report, report_path)
     except ApexError as error:
-        print(error.user_message())
+        print(error.public_message())
+        return 1
+    except Exception:
+        log.exception("Evaluation failed")
+        print(UNEXPECTED_ERROR_MESSAGE)
         return 1
 
-    report_path = save_report(report, PROJECT_ROOT / "eval" / "reports")
-    print_report(report, report_path)
     return 0
 
 

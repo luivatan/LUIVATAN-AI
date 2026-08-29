@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from apex_ai.config.settings import Settings, with_overrides
-from apex_ai.core.errors import ApexError
+from apex_ai.core.errors import UNEXPECTED_ERROR_MESSAGE, ApexError
 from apex_ai.core.logging import get_logger, setup_logging
 from apex_ai.memory.confirmation import MemoryConfirmationService
 from apex_ai.memory.conversation import ConversationMemory
@@ -128,15 +128,13 @@ def build_services(
                 long_term_memory.removed_unsafe_on_startup,
             )
     except ApexError as error:
-        services._extras["long_term_memory_error"] = error.user_message()
+        services._extras["long_term_memory_error"] = error.public_message()
         log.warning(
-            "Long-term memory unavailable; core services will continue: %s",
-            error.what,
+            "Long-term memory unavailable; core services will continue:\n%s",
+            error.user_message(),
         )
-    except Exception as error:  # defensive optional-component boundary
-        services._extras["long_term_memory_error"] = (
-            f"Unexpected {type(error).__name__} while opening long-term memory."
-        )
+    except Exception:  # defensive optional-component boundary
+        services._extras["long_term_memory_error"] = UNEXPECTED_ERROR_MESSAGE
         log.exception("Unexpected long-term-memory initialization failure")
 
     try:
@@ -193,12 +191,10 @@ def build_services(
             services.reranker.name,
         )
     except ApexError as error:
-        services.startup_error = error.user_message()
-        log.error("Startup problem:\n%s", services.startup_error)
-    except Exception as error:  # truly unexpected
-        services.startup_error = (
-            "Unexpected startup failure.\n\nDetails:\n" f"{type(error).__name__}: {error}"
-        )
+        services.startup_error = error.public_message()
+        log.error("Startup problem:\n%s", error.user_message())
+    except Exception:  # truly unexpected
+        services.startup_error = UNEXPECTED_ERROR_MESSAGE
         log.exception("Unexpected startup failure")
     return services
 

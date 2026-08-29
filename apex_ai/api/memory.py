@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from apex_ai.api.errors import APIError
 from apex_ai.core.errors import ApexError
 
 
@@ -13,9 +14,11 @@ def create_memory_router(services) -> APIRouter:
     def confirmation_service():
         service = services.memory_confirmation
         if service is None:
-            raise HTTPException(
-                status_code=503,
-                detail="Long-term memory is unavailable. Core chat remains available.",
+            raise APIError(
+                503,
+                "Long-term memory is unavailable. Core chat remains available.",
+                code="memory_unavailable",
+                retryable=True,
             )
         return service
 
@@ -24,7 +27,7 @@ def create_memory_router(services) -> APIRouter:
         try:
             return [item.to_dict() for item in confirmation_service().pending()]
         except ApexError as error:
-            raise HTTPException(status_code=503, detail=error.user_message()) from error
+            raise APIError.from_apex(error, status_code=503) from error
 
     @router.post("/candidates/{proposal_id}/approve")
     def approve_candidate(proposal_id: str):
@@ -39,7 +42,7 @@ def create_memory_router(services) -> APIRouter:
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         except ApexError as error:
-            raise HTTPException(status_code=400, detail=error.user_message()) from error
+            raise APIError.from_apex(error, status_code=400) from error
 
     @router.post("/candidates/{proposal_id}/reject")
     def reject_candidate(proposal_id: str):
@@ -53,7 +56,7 @@ def create_memory_router(services) -> APIRouter:
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         except ApexError as error:
-            raise HTTPException(status_code=503, detail=error.user_message()) from error
+            raise APIError.from_apex(error, status_code=503) from error
 
     return router
 

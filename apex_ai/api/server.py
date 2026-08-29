@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from apex_ai import APP_NAME, __version__
 from apex_ai.api.chat import GenerationManager, create_chat_router
+from apex_ai.api.errors import install_error_handlers, service_not_ready_error
 from apex_ai.api.memory import create_memory_router
 from apex_ai.api.uploads import create_upload_router
-from apex_ai.core.errors import ApexError
 from apex_ai.memory.conversations import ConversationStore
 from apex_ai.models.manager import ModelManager
 from apex_ai.runtime import ApexServices, build_services
@@ -56,13 +56,14 @@ def create_api(
         docs_url="/api/docs" if include_web else "/docs",
         redoc_url=None,
     )
+    install_error_handlers(app)
     app.state.apex_services = services
     app.state.conversations = conversations
     app.state.generations = GenerationManager()
 
     def _ensure_ready() -> None:
         if not services.ready:
-            raise HTTPException(status_code=503, detail=services.startup_error)
+            raise service_not_ready_error()
 
     @app.get("/health")
     def health():
@@ -119,58 +120,45 @@ def create_api(
 
     @app.post("/models/select")
     def select_model(payload: ModelSelection):
-        try:
-            path = services.select_model(payload.name)
-            return {"selected": path}
-        except ApexError as error:
-            raise HTTPException(status_code=400, detail=error.user_message()) from error
+        path = services.select_model(payload.name)
+        return {"selected": path}
 
     @app.get("/documents")
     def documents():
-        if not services.ingestion:
-            raise HTTPException(status_code=503, detail=services.startup_error)
+        _ensure_ready()
         return [document.as_dict() for document in services.ingestion.list_documents()]
 
     @app.post("/documents/ingest")
     def ingest(payload: IngestRequest):
         """Local automation endpoint. Browsers use safe multipart /documents/upload."""
         _ensure_ready()
-        try:
-            result = services.ingestion.ingest_path(payload.path, force=payload.force)
-            return {
-                "status": result.status,
-                "document_id": result.document_id,
-                "chunks": result.chunks,
-                "message": result.message,
-                "warnings": result.warnings,
-            }
-        except ApexError as error:
-            raise HTTPException(status_code=400, detail=error.user_message()) from error
+        result = services.ingestion.ingest_path(payload.path, force=payload.force)
+        return {
+            "status": result.status,
+            "document_id": result.document_id,
+            "chunks": result.chunks,
+            "message": result.message,
+            "warnings": result.warnings,
+        }
 
     @app.delete("/documents/{document_id}")
     def delete_document(document_id: str):
         _ensure_ready()
-        try:
-            return {"message": services.ingestion.remove(document_id)}
-        except ApexError as error:
-            raise HTTPException(status_code=400, detail=error.user_message()) from error
+        return {"message": services.ingestion.remove(document_id)}
 
     @app.post("/query")
     def query(payload: QueryRequest):
         """Backward-compatible non-streaming endpoint."""
         _ensure_ready()
-        try:
-            result = services.engine.ask(payload.question, use_memory=payload.use_memory)
-            return {
-                "answer": result.answer,
-                "insufficient_evidence": result.insufficient_evidence,
-                "confidence": result.confidence,
-                "citations": [citation.to_dict() for citation in result.citations],
-                "queries_used": result.queries_used,
-                "timings": result.timings,
-            }
-        except ApexError as error:
-            raise HTTPException(status_code=500, detail=error.user_message()) from error
+        result = services.engine.ask(payload.question, use_memory=payload.use_memory)
+        return {
+            "answer": result.answer,
+            "insufficient_evidence": result.insufficient_evidence,
+            "confidence": result.confidence,
+            "citations": [citation.to_dict() for citation in result.citations],
+            "queries_used": result.queries_used,
+            "timings": result.timings,
+        }
 
     if services.settings.rag_debug:
         # Developer-only diagnostics: no UI link, excluded from OpenAPI, and
@@ -178,14 +166,11 @@ def create_api(
         @app.post("/debug/rag", include_in_schema=False)
         def debug_rag(payload: RagDebugRequest):
             _ensure_ready()
-            try:
-                return services.engine.debug(
-                    payload.question,
-                    use_memory=payload.use_memory,
-                    generate=payload.generate,
-                )
-            except ApexError as error:
-                raise HTTPException(status_code=500, detail=error.user_message()) from error
+            return services.engine.debug(
+                payload.question,
+                use_memory=payload.use_memory,
+                generate=payload.generate,
+            )
 
     app.include_router(create_upload_router(services))
     app.include_router(create_memory_router(services))

@@ -12,10 +12,12 @@ to toggle citation printing, 'clear' to wipe conversation memory.
 from __future__ import annotations
 
 import argparse
-import sys
 
-from apex_ai.core.errors import ApexError
+from apex_ai.core.errors import UNEXPECTED_ERROR_MESSAGE, ApexError
+from apex_ai.core.logging import get_logger
 from apex_ai.runtime import build_services
+
+log = get_logger("cli")
 
 
 def main() -> int:
@@ -36,7 +38,11 @@ def main() -> int:
                 print("\n" + result.sources_block)
             return 0
         except ApexError as error:
-            print(error.user_message())
+            print(error.public_message())
+            return 1
+        except Exception:
+            log.exception("One-shot chat failed")
+            print(UNEXPECTED_ERROR_MESSAGE)
             return 1
 
     print("Apex AI terminal chat — 'exit' to quit, 'clear' to reset memory.")
@@ -50,8 +56,14 @@ def main() -> int:
         if question.lower() in {"exit", "quit"}:
             return 0
         if question.lower() == "clear":
-            services.memory.clear()
-            print("Conversation memory cleared.")
+            try:
+                services.memory.clear()
+                print("Conversation memory cleared.")
+            except ApexError as error:
+                print("\n" + error.public_message())
+            except Exception:
+                log.exception("Conversation-memory clear failed")
+                print("\n" + UNEXPECTED_ERROR_MESSAGE)
             continue
         if not question:
             continue
@@ -62,9 +74,10 @@ def main() -> int:
             if result.sources_block:
                 print("\n" + result.sources_block)
         except ApexError as error:
-            print("\n" + error.user_message())
-        except Exception as error:  # unexpected — log has the traceback
-            print(f"\nUnexpected error: {error}\nSee logs/apex.log for details.")
+            print("\n" + error.public_message())
+        except Exception:
+            log.exception("Interactive chat failed")
+            print("\n" + UNEXPECTED_ERROR_MESSAGE)
 
 
 if __name__ == "__main__":

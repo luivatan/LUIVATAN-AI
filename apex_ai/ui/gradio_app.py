@@ -6,8 +6,8 @@ The workflow mirrors the product spec:
       -> ask question -> receive answer -> view sources
 
 Layout: a status header (model, document/chunk counts, embedding model) plus
-four tabs — Chat, Documents, Models, About. Every subsystem error surfaces as
-a readable "WHAT / WHY / HOW TO FIX" message, never a raw traceback.
+four tabs — Chat, Documents, Models, About. Expected subsystem errors surface as
+a readable "WHAT / HOW TO FIX" message; unexpected failures never render a traceback.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from __future__ import annotations
 import gradio as gr
 
 from apex_ai import APP_NAME, __version__
-from apex_ai.core.errors import ApexError
+from apex_ai.core.errors import UNEXPECTED_ERROR_MESSAGE, ApexError
 from apex_ai.core.logging import get_logger
 from apex_ai.models.manager import ModelManager
 from apex_ai.runtime import ApexServices, build_services
@@ -177,13 +177,10 @@ def create_app(services: ApexServices | None = None) -> gr.Blocks:
                             choices=choices, value=choices[0] if choices else None
                         ), services.memory.display()
             except ApexError as error:
-                yield error.user_message(), gr.update(), services.memory.display()
-            except Exception as error:  # unexpected
+                yield error.public_message(), gr.update(), services.memory.display()
+            except Exception:  # unexpected
                 log.exception("Chat failed")
-                yield (
-                    f"Chat failed unexpectedly.\n\nDetails: {type(error).__name__}: {error}\n"
-                    "Technical details were written to logs/apex.log."
-                ), gr.update(), services.memory.display()
+                yield UNEXPECTED_ERROR_MESSAGE, gr.update(), services.memory.display()
 
         def show_source(label: str):
             if not label:
@@ -193,7 +190,7 @@ def create_app(services: ApexServices | None = None) -> gr.Blocks:
                 return "Source text is not available for this answer."
             return citations.get(label, "Source text is not available for this answer.")
 
-        def do_ingest(files, progress=gr.Progress()):
+        def do_ingest(files):
             if not services.ready:
                 return _startup_blocked(services)
             if not files:
@@ -204,12 +201,11 @@ def create_app(services: ApexServices | None = None) -> gr.Blocks:
                     result = services.ingestion.ingest_path(file_path)
                     lines.append(f"- **{result.message}**")
                 except ApexError as error:
-                    lines.append(f"- ❌ {error.user_message()}")
-                except Exception as error:
+                    lines.append(f"- ❌ {error.public_message()}")
+                except Exception:
                     log.exception("Ingest failed")
-                    lines.append(f"- ❌ Unexpected error on `{file_path}`: {error}")
-            refresh = _library_rows(services)
-            return "\n".join(lines)  # noqa: RET504  (library refreshed via separate output)
+                    lines.append(f"- ❌ {UNEXPECTED_ERROR_MESSAGE}")
+            return "\n".join(lines)
 
         def do_reindex(name):
             if not name:
@@ -223,7 +219,10 @@ def create_app(services: ApexServices | None = None) -> gr.Blocks:
                 result = services.ingestion.reindex(info.document_id)
                 return result.message
             except ApexError as error:
-                return error.user_message()
+                return error.public_message()
+            except Exception:
+                log.exception("Re-index failed")
+                return UNEXPECTED_ERROR_MESSAGE
 
         def do_delete(name):
             if not name:
@@ -236,7 +235,10 @@ def create_app(services: ApexServices | None = None) -> gr.Blocks:
                     return f"Document '{name}' not found."
                 return services.ingestion.remove(info.document_id)
             except ApexError as error:
-                return error.user_message()
+                return error.public_message()
+            except Exception:
+                log.exception("Document deletion failed")
+                return UNEXPECTED_ERROR_MESSAGE
 
         def do_select_model(name):
             if not name:
@@ -249,19 +251,31 @@ def create_app(services: ApexServices | None = None) -> gr.Blocks:
                     "It will load automatically when you ask the first question."
                 )
             except ApexError as error:
-                return error.user_message()
+                return error.public_message()
+            except Exception:
+                log.exception("Model selection failed")
+                return UNEXPECTED_ERROR_MESSAGE
 
         def do_refresh_models():
-            return (
-                _model_rows(services),
-                gr.update(choices=_model_choices(services)),
-                _services_banner(services),
-            )
+            try:
+                return (
+                    _model_rows(services),
+                    gr.update(choices=_model_choices(services)),
+                    _services_banner(services),
+                )
+            except Exception:
+                log.exception("Model refresh failed")
+                return [], gr.update(choices=[]), UNEXPECTED_ERROR_MESSAGE
 
         def do_clear_memory():
-            if services.memory:
+            try:
+                if not services.memory:
+                    return ""
                 services.memory.clear()
-            return services.memory.display()
+                return services.memory.display()
+            except Exception:
+                log.exception("Conversation memory clear failed")
+                return UNEXPECTED_ERROR_MESSAGE
 
         # ---- wiring ----
         ask_button.click(

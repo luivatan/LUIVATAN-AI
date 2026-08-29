@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Bulk-ingest a folder of documents from the command line.
 
     python scripts/ingest_folder.py path/to/folder [--force]
@@ -12,9 +13,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from apex_ai.core.errors import ApexError  # noqa: E402
-from apex_ai.documents.extraction import supported  # noqa: E402
-from apex_ai.runtime import build_services  # noqa: E402
+from apex_ai.core.errors import UNEXPECTED_ERROR_MESSAGE, ApexError
+from apex_ai.core.logging import get_logger
+from apex_ai.documents.extraction import supported
+from apex_ai.runtime import build_services
+
+log = get_logger("ingest.cli")
 
 
 def main() -> int:
@@ -32,7 +36,12 @@ def main() -> int:
         print(services.startup_error)
         return 1
 
-    files = [p for p in sorted(args.folder.rglob("*")) if p.is_file() and supported(p)]
+    try:
+        files = [p for p in sorted(args.folder.rglob("*")) if p.is_file() and supported(p)]
+    except Exception:
+        log.exception("Could not scan the requested ingestion folder")
+        print(UNEXPECTED_ERROR_MESSAGE)
+        return 1
     if not files:
         print(f"No supported files (PDF/TXT/MD/JSON) found in {args.folder}")
         return 0
@@ -42,10 +51,24 @@ def main() -> int:
             result = services.ingestion.ingest_path(path, force=args.force)
             print(f"[{result.status}] {result.message}")
         except ApexError as error:
-            print(f"[error] {path.name}:\n{error.user_message()}\n")
+            print(f"[error] {path.name}:\n{error.public_message()}\n")
+        except Exception:
+            log.exception("Unexpected batch-ingest failure for %s", path.name)
+            print(f"[error] {path.name}:\n{UNEXPECTED_ERROR_MESSAGE}\n")
 
-    stats = services.ingestion.stats()
-    print(f"\nDone. Library now holds {stats['documents']} document(s), {stats['chunks']} chunk(s).")
+    try:
+        stats = services.ingestion.stats()
+        print(
+            f"\nDone. Library now holds {stats['documents']} document(s), "
+            f"{stats['chunks']} chunk(s)."
+        )
+    except ApexError as error:
+        print(error.public_message())
+        return 1
+    except Exception:
+        log.exception("Could not read final ingestion statistics")
+        print(UNEXPECTED_ERROR_MESSAGE)
+        return 1
     return 0
 
 
