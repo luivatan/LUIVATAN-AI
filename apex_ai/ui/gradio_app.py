@@ -30,10 +30,16 @@ _MEDICAL_NOTICE = (
 )
 
 
+def _user_id(services: ApexServices) -> str:
+    """Gradio is a single-account tool, same precedent as ``/query`` and the
+    CLI: it always acts as the auto-provisioned default local account."""
+    return services.default_local_user.id if services.default_local_user else ""
+
+
 def _services_banner(services: ApexServices) -> str:
     if not services.ready:
         return f"⚠️ **Startup problem**\n\n{services.startup_error}"
-    docs = len(services.ingestion.list_documents())
+    docs = len(services.ingestion.list_documents(_user_id(services)))
     chunks = services.store.count()
     model = services.settings.model_path or "(no GGUF selected — choose one in Models)"
     embed = services.embeddings.name
@@ -198,7 +204,7 @@ def create_app(services: ApexServices | None = None) -> gr.Blocks:
             lines = []
             for file_path in files:
                 try:
-                    result = services.ingestion.ingest_path(file_path)
+                    result = services.ingestion.ingest_path(file_path, _user_id(services))
                     lines.append(f"- **{result.message}**")
                 except ApexError as error:
                     lines.append(f"- ❌ {error.public_message()}")
@@ -212,11 +218,12 @@ def create_app(services: ApexServices | None = None) -> gr.Blocks:
                 return "Choose a document first."
             try:
                 info = next(
-                    (d for d in services.ingestion.list_documents() if d.name == name), None
+                    (d for d in services.ingestion.list_documents(_user_id(services)) if d.name == name),
+                    None,
                 )
                 if not info:
                     return f"Document '{name}' not found."
-                result = services.ingestion.reindex(info.document_id)
+                result = services.ingestion.reindex(info.document_id, _user_id(services))
                 return result.message
             except ApexError as error:
                 return error.public_message()
@@ -229,11 +236,12 @@ def create_app(services: ApexServices | None = None) -> gr.Blocks:
                 return "Choose a document first."
             try:
                 info = next(
-                    (d for d in services.ingestion.list_documents() if d.name == name), None
+                    (d for d in services.ingestion.list_documents(_user_id(services)) if d.name == name),
+                    None,
                 )
                 if not info:
                     return f"Document '{name}' not found."
-                return services.ingestion.remove(info.document_id)
+                return services.ingestion.remove(info.document_id, _user_id(services))
             except ApexError as error:
                 return error.public_message()
             except Exception:
@@ -326,14 +334,14 @@ def _library_rows(services: ApexServices):
         return []
     return [
         [d.name, d.file_type, d.pages, d.chunks, d.created_at, "yes" if d.looks_medical else "no"]
-        for d in services.ingestion.list_documents()
+        for d in services.ingestion.list_documents(_user_id(services))
     ]
 
 
 def _document_choices(services: ApexServices):
     if not services.ingestion:
         return []
-    return [d.name for d in services.ingestion.list_documents()]
+    return [d.name for d in services.ingestion.list_documents(_user_id(services))]
 
 
 def _model_rows(services: ApexServices):

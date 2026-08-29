@@ -18,7 +18,7 @@ from apex_ai.rag.query_processing import QueryProcessor
 from apex_ai.retrieval.keyword import BM25Index, tokenize
 from apex_ai.retrieval.pipeline import HybridRetriever
 from apex_ai.retrieval.reranker import FallbackReranker, make_reranker
-from tests.conftest import FakeLLM
+from tests.conftest import USER, FakeLLM
 
 
 def _chunk(
@@ -117,11 +117,11 @@ def test_bm25plus_filters_no_overlap_baseline():
         version = 0
 
         @staticmethod
-        def get_all_chunks():
+        def get_all_chunks(user_id):
             return [_chunk("1", "alpha beta"), _chunk("2", "gamma delta")]
 
     index = BM25Index(Store())
-    assert index.search("totally-unrelated-identifier") == []
+    assert index.search("totally-unrelated-identifier", USER) == []
 
 
 def test_bm25_finds_exact_name_number_and_date(ingestion, store, tmp_path):
@@ -130,7 +130,7 @@ def test_bm25_finds_exact_name_number_and_date(ingestion, store, tmp_path):
         "# Release Record\n\nMira Chen approved budget 12.4 on 2026-04-17 for APX-447.",
         encoding="utf-8",
     )
-    ingestion.ingest_path(document)
+    ingestion.ingest_path(document, USER)
     index = BM25Index(store)
     for query, expected in (
         ("Mira Chen", "Mira Chen"),
@@ -138,7 +138,7 @@ def test_bm25_finds_exact_name_number_and_date(ingestion, store, tmp_path):
         ("2026-04-17", "2026-04-17"),
         ("APX-447", "APX-447"),
     ):
-        hits = index.search(query, k=1)
+        hits = index.search(query, USER, k=1)
         assert hits and expected in hits[0].text
 
 
@@ -147,14 +147,14 @@ def test_semantic_failure_falls_back_to_exact_bm25(settings):
         version = 0
 
         @staticmethod
-        def search(query, k):
+        def search(query, user_id, k):
             raise RuntimeError("embedding unavailable")
 
         @staticmethod
-        def get_all_chunks():
+        def get_all_chunks(user_id):
             return [_chunk("exact", "The release identifier is APX-447.")]
 
-    run = HybridRetriever(Store(), settings).retrieve_with_trace(["APX-447"])
+    run = HybridRetriever(Store(), settings).retrieve_with_trace(["APX-447"], USER)
     assert [chunk.chunk_id for chunk in run.chunks] == ["exact"]
     assert run.trace.errors and run.trace.keyword_counts == [1]
     assert run.chunks[0].metadata["_retrieval_channels"] == ["keyword"]
@@ -165,15 +165,17 @@ def test_keyword_failure_falls_back_to_semantic(settings):
 
     class Store:
         @staticmethod
-        def search(query, k):
+        def search(query, user_id, k):
             return [hit]
 
     class BrokenKeyword:
         @staticmethod
-        def search(query, k):
+        def search(query, user_id, k):
             raise RuntimeError("BM25 unavailable")
 
-    run = HybridRetriever(Store(), settings, BrokenKeyword()).retrieve_with_trace(["related"])
+    run = HybridRetriever(Store(), settings, BrokenKeyword()).retrieve_with_trace(
+        ["related"], USER
+    )
     assert run.chunks[0].chunk_id == "semantic"
     assert run.trace.errors and run.trace.semantic_counts == [1]
 
@@ -183,13 +185,13 @@ def test_semantic_and_keyword_candidate_pool_sizes_are_honored(settings):
 
     class Store:
         @staticmethod
-        def search(query, k):
+        def search(query, user_id, k):
             requested["semantic"] = k
             return []
 
     class Keyword:
         @staticmethod
-        def search(query, k):
+        def search(query, user_id, k):
             requested["keyword"] = k
             return []
 
@@ -199,7 +201,7 @@ def test_semantic_and_keyword_candidate_pool_sizes_are_honored(settings):
         semantic_candidate_k=2,
         keyword_candidate_k=3,
     )
-    HybridRetriever(Store(), configured, Keyword()).retrieve(["query"])
+    HybridRetriever(Store(), configured, Keyword()).retrieve(["query"], USER)
     assert requested == {"semantic": 2, "keyword": 3}
 
 

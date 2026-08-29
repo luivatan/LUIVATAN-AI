@@ -7,8 +7,9 @@ import uuid
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 
+from apex_ai.api.auth import make_require_user_dependency
 from apex_ai.api.errors import APIError, service_not_ready_error
 from apex_ai.api.schemas import IngestOut, UploadOut
 from apex_ai.core.logging import get_logger
@@ -20,9 +21,12 @@ log = get_logger("api.uploads")
 
 def create_upload_router(services) -> APIRouter:
     router = APIRouter(tags=["documents"])
+    require_user = make_require_user_dependency(services)
 
     @router.post("/documents/upload", response_model=UploadOut)
-    async def upload_document(file: Annotated[UploadFile, File()]):
+    async def upload_document(
+        file: Annotated[UploadFile, File()], user=Depends(require_user)
+    ):
         staging: Path | None = None
         try:
             if not services.ready:
@@ -67,7 +71,7 @@ def create_upload_router(services) -> APIRouter:
                     code="empty_upload",
                 )
 
-            result = services.ingestion.ingest_path(staged_file)
+            result = services.ingestion.ingest_path(staged_file, user.id)
             return {
                 "status": result.status,
                 "document_id": result.document_id,
@@ -89,10 +93,10 @@ def create_upload_router(services) -> APIRouter:
                 shutil.rmtree(staging, ignore_errors=True)
 
     @router.post("/documents/{document_id}/reindex", response_model=IngestOut)
-    def reindex_document(document_id: str):
+    def reindex_document(document_id: str, user=Depends(require_user)):
         if not services.ready:
             raise service_not_ready_error()
-        result = services.ingestion.reindex(document_id)
+        result = services.ingestion.reindex(document_id, user.id)
         return {
             "status": result.status,
             "document_id": result.document_id,

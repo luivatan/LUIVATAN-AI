@@ -239,6 +239,13 @@ def build_services(
 
         services.ingestion = IngestionService(settings, services.store)
 
+        # Phase 55: pre-Phase-55 chunks/registry entries have no owner yet;
+        # assign them to the default local account, same precedent as
+        # long_term_memory.backfill_owner above.
+        if services.default_local_user is not None:
+            services.store.backfill_owner(services.default_local_user.id)
+            services.ingestion.backfill_owner(services.default_local_user.id)
+
         keyword = BM25Index(services.store)
         services.retriever = HybridRetriever(services.store, settings, keyword)
         services.reranker = make_reranker(settings)
@@ -279,7 +286,11 @@ def build_services(
             logging.INFO,
             "runtime.ready",
             "Apex AI services ready",
-            document_count=len(services.ingestion.list_documents()),
+            document_count=len(
+                services.ingestion.list_documents(services.default_local_user.id)
+                if services.default_local_user is not None
+                else []
+            ),
             chunk_count=services.store.count(),
             reranker=services.reranker.name,
         )

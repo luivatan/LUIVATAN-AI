@@ -167,7 +167,10 @@ def _ensure_docs_ingested(services, docs_dir: Path, items: list[dict]) -> None:
         referenced.update(expected_sources)
     referenced.discard("")
 
-    indexed_names = {d.name.lower() for d in services.ingestion.list_documents()}
+    # Evaluation is a single-account offline tool, same precedent as /query
+    # and the CLI: it always acts as the auto-provisioned default local account.
+    user_id = services.default_local_user.id if services.default_local_user else ""
+    indexed_names = {d.name.lower() for d in services.ingestion.list_documents(user_id)}
     for name in sorted(referenced):
         candidates = list(docs_dir.glob(name)) or list(docs_dir.glob(f"**/{name}"))
         for candidate in candidates:
@@ -175,7 +178,7 @@ def _ensure_docs_ingested(services, docs_dir: Path, items: list[dict]) -> None:
                 from apex_ai.core.logging import timed
 
                 with timed(log, "evaluation document ingestion", level=logging.INFO):
-                    services.ingestion.ingest_path(candidate, force=False)
+                    services.ingestion.ingest_path(candidate, user_id, force=False)
                 log.info("Ingested one evaluation document")
 
 

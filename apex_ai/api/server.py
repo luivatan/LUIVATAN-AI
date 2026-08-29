@@ -68,7 +68,8 @@ def create_api(
     conversations = conversations or ConversationStore(services.settings.conversation_db_path)
     # Phase 55: pre-Phase-55 conversations have no owner yet; assign them to the
     # default local account, same precedent as long_term_memory.backfill_owner
-    # (runtime.py, where LongTermMemoryStore lives).
+    # (runtime.py, where LongTermMemoryStore lives). The document store's own
+    # backfill runs in runtime.py for the same reason: that's where it's built.
     if services.default_local_user is not None:
         conversations.backfill_owner(services.default_local_user.id)
     app = FastAPI(
@@ -202,16 +203,18 @@ def create_api(
         path = services.select_model(payload.name)
         return {"selected": path}
 
+    require_user = make_require_user_dependency(services)
+
     @app.get("/documents", response_model=list[DocumentOut])
-    def documents():
+    def documents(user=Depends(require_user)):
         _ensure_ready()
-        return [document.as_dict() for document in services.ingestion.list_documents()]
+        return [document.as_dict() for document in services.ingestion.list_documents(user.id)]
 
     @app.post("/documents/ingest", response_model=IngestOut)
-    def ingest(payload: IngestRequest):
+    def ingest(payload: IngestRequest, user=Depends(require_user)):
         """Local automation endpoint. Browsers use safe multipart /documents/upload."""
         _ensure_ready()
-        result = services.ingestion.ingest_path(payload.path, force=payload.force)
+        result = services.ingestion.ingest_path(payload.path, user.id, force=payload.force)
         return {
             "status": result.status,
             "document_id": result.document_id,
@@ -221,9 +224,9 @@ def create_api(
         }
 
     @app.delete("/documents/{document_id}", response_model=RemovedOut)
-    def delete_document(document_id: str):
+    def delete_document(document_id: str, user=Depends(require_user)):
         _ensure_ready()
-        return {"message": services.ingestion.remove(document_id)}
+        return {"message": services.ingestion.remove(document_id, user.id)}
 
     @app.post("/query", response_model=QueryOut)
     def query(payload: QueryRequest):
@@ -255,8 +258,6 @@ def create_api(
     app.include_router(create_upload_router(services))
     app.include_router(create_memory_router(services))
     app.include_router(create_chat_router(services, conversations, app.state.generations))
-
-    require_user = make_require_user_dependency(services)
 
     @app.delete("/conversations", response_model=DeletedCountOut)
     def delete_all_conversations(user=Depends(require_user)):

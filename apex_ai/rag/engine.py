@@ -345,13 +345,14 @@ class RagEngine:
         if hasattr(self.retriever, "retrieve_with_trace"):
             run = self.retriever.retrieve_with_trace(
                 turn.queries,
+                self.user_id,
                 include_debug=bool(getattr(self.settings, "rag_debug", False)),
             )
             turn.candidates = run.chunks
             turn.retrieval_trace = run.trace
             turn.errors.extend(run.trace.errors)
         else:  # compatibility with custom retrievers
-            turn.candidates = self.retriever.retrieve(turn.queries)
+            turn.candidates = self.retriever.retrieve(turn.queries, self.user_id)
         turn.timings["retrieval"] = round((time.perf_counter() - stage) * 1000, 3)
         if turn.retrieval_trace:
             for name, duration in turn.retrieval_trace.timings_ms.items():
@@ -540,7 +541,7 @@ class RagEngine:
                 "sources": [],
                 "generation_skipped": True,
             }
-        if self.store.count() == 0:
+        if self.store.count(self.user_id) == 0:
             return {
                 "question": question,
                 "model_response": (
@@ -625,7 +626,7 @@ class RagEngine:
         if not question or not question.strip():
             return AnswerResult(answer="Please ask a question first.")
 
-        if self.store.count() == 0:
+        if self.store.count(self.user_id) == 0:
             return AnswerResult(
                 answer="There are no indexed documents yet. Open the Documents tab and "
                 "upload a PDF, TXT, Markdown or JSON file first.",
@@ -665,7 +666,7 @@ class RagEngine:
             yield {"type": "final", "result": AnswerResult(answer="Please ask a question first.")}
             return
 
-        if self.store.count() == 0:
+        if self.store.count(self.user_id) == 0:
             yield {
                 "type": "final",
                 "result": AnswerResult(

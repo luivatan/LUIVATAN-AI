@@ -148,13 +148,16 @@ class HybridRetriever:
         self.settings = settings
         self.keyword = keyword_index or BM25Index(vector_store)
 
-    def retrieve(self, queries: list[str], top_k: int | None = None) -> list[RetrievedChunk]:
+    def retrieve(
+        self, queries: list[str], user_id: str, top_k: int | None = None
+    ) -> list[RetrievedChunk]:
         """Compatibility API returning only fused chunks."""
-        return self.retrieve_with_trace(queries, top_k=top_k).chunks
+        return self.retrieve_with_trace(queries, user_id, top_k=top_k).chunks
 
     def retrieve_with_trace(
         self,
         queries: list[str],
+        user_id: str,
         top_k: int | None = None,
         *,
         include_debug: bool = False,
@@ -190,7 +193,7 @@ class HybridRetriever:
         for query_index, query in enumerate(clean_queries):
             stage_start = time.perf_counter()
             try:
-                vector_hits = self.store.search(query, k=semantic_limit)
+                vector_hits = self.store.search(query, user_id, k=semantic_limit)
             except Exception as error:  # one channel may degrade independently
                 vector_hits = []
                 trace.errors.append(f"semantic: {type(error).__name__}: {error}")
@@ -210,7 +213,7 @@ class HybridRetriever:
 
             stage_start = time.perf_counter()
             try:
-                keyword_hits = self.keyword.search(query, k=keyword_limit)
+                keyword_hits = self.keyword.search(query, user_id, k=keyword_limit)
             except Exception as error:  # optional lexical channel must not break RAG
                 keyword_hits = []
                 trace.errors.append(f"keyword: {type(error).__name__}: {error}")

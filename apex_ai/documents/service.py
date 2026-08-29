@@ -73,6 +73,9 @@ class DocumentInfo:
     created_at: str
     empty_pages: int = 0
     looks_medical: bool = True
+    # Phase 55: defaults to "" so a pre-Phase-55 registry file (entries with no
+    # owner yet) still loads; backfill_owner() assigns those to a real account.
+    user_id: str = ""
 
     def as_dict(self) -> dict:
         return {
@@ -85,6 +88,7 @@ class DocumentInfo:
             "created_at": self.created_at,
             "empty_pages": self.empty_pages,
             "looks_medical": self.looks_medical,
+            "user_id": self.user_id,
         }
 
 
@@ -94,7 +98,10 @@ class IngestionService:
         self.store = store
         self.chunker = Chunker(settings)
         self.registry_path = settings.database_path.parent / "document_registry.json"
-        self._registry: dict[str, DocumentInfo] = {}
+        # Phase 55: content-derived document_id alone is not a unique key once
+        # two accounts can each hold their own copy of identical bytes -
+        # every entry is scoped by (document_id, user_id).
+        self._registry: dict[tuple[str, str], DocumentInfo] = {}
         self._load_registry()
 
     # -- registry (small JSON file: id -> DocumentInfo) -----------------------
@@ -108,7 +115,7 @@ class IngestionService:
             data = json.loads(self.registry_path.read_text(encoding="utf-8"))
             for item in data:
                 info = DocumentInfo(**item)
-                self._registry[info.document_id] = info
+                self._registry[(info.document_id, info.user_id)] = info
         except (json.JSONDecodeError, OSError, TypeError) as error:
             log.warning(
                 "Document registry unreadable; starting fresh (error_type=%s).",
@@ -123,10 +130,36 @@ class IngestionService:
         payload = [info.as_dict() for info in self._registry.values()]
         self.registry_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
+    def backfill_owner(self, user_id: str) -> int:
+        """Assign every pre-Phase-55 registry entry (``user_id==""``) to
+        ``user_id``. Idempotent, same precedent as ``ChromaVectorStore``'s and
+        the conversation/memory stores' ``backfill_owner``."""
+        updated: dict[tuple[str, str], DocumentInfo] = {}
+        changed = 0
+        for (document_id, owner), info in self._registry.items():
+            if not owner:
+                info.user_id = user_id
+                owner = user_id
+                changed += 1
+            updated[(document_id, owner)] = info
+        if changed:
+            self._registry = updated
+            self._save_registry()
+        return changed
+
     # -- ingest ---------------------------------------------------------------
 
-    def ingest_path(self, path: str | Path, force: bool = False) -> IngestResult:
-        """Ingest one supported file. `force=True` re-indexes an existing doc."""
+    def ingest_path(
+        self, path: str | Path, user_id: str, force: bool = False
+    ) -> IngestResult:
+        """Ingest one supported file into ``user_id``'s library.
+
+        `force=True` re-indexes an existing doc. Dedup is per-account: two
+        accounts uploading identical bytes each get their own indexed copy
+        (Phase 55) — a global content-hash dedup would mean the second
+        account's upload silently attached to the first account's document,
+        which is exactly the cross-account leak this phase closes.
+        """
         source = Path(path)
         if not source.is_file():
             raise DocumentProcessingError(
@@ -143,11 +176,12 @@ class IngestionService:
         # Hash before copying so a duplicate upload cannot overwrite a managed file.
         # If two different files share a name, retain both with a short content-hash
         # suffix instead of silently making the older registry entry point at new bytes.
-        self.settings.upload_dir.mkdir(parents=True, exist_ok=True)
+        user_upload_dir = self.settings.upload_dir / user_id
+        user_upload_dir.mkdir(parents=True, exist_ok=True)
         safe_name = sanitize_filename(source.name)
         document_id = sha256_file(source)
 
-        if not force and self.store.has_document(document_id):
+        if not force and self.store.has_document(document_id, user_id):
             log.info("Duplicate document skipped: %s", document_id[:12])
             return IngestResult(
                 status="duplicate",
@@ -157,14 +191,12 @@ class IngestionService:
                         "Use Re-index to force a rebuild.",
             )
 
-        destination = ensure_within(
-            self.settings.upload_dir, self.settings.upload_dir / safe_name
-        )
+        destination = ensure_within(user_upload_dir, user_upload_dir / safe_name)
         if source.resolve() != destination and destination.exists():
             if sha256_file(destination) != document_id:
                 destination = ensure_within(
-                    self.settings.upload_dir,
-                    self.settings.upload_dir
+                    user_upload_dir,
+                    user_upload_dir
                     / f"{destination.stem}-{document_id[:8]}{destination.suffix}",
                 )
         if source.resolve() != destination:
@@ -182,14 +214,25 @@ class IngestionService:
                 )
 
             if force:
-                self.store.delete_document(document_id)
+                self.store.delete_document(document_id, user_id)
+
+            # Chunk IDs are otherwise pure content hashes (document_id:seq),
+            # so two accounts ingesting identical bytes would collide on the
+            # same Chroma row ID and silently overwrite each other's chunk.
+            # Scoping both the metadata and the ID by user_id keeps every
+            # account's copy in the shared collection distinct.
+            for chunk in chunks:
+                chunk.metadata["user_id"] = user_id
+                scoped_id = f"{user_id}:{chunk.chunk_id}"
+                chunk.metadata["chunk_id"] = scoped_id
+                chunk.chunk_id = scoped_id
 
             self.store.upsert_chunks(chunks)
 
             looks_medical = is_likely_medical_document(document.full_text())
             warnings = [] if looks_medical else [MEDICAL_WARNING]
 
-            self._registry[document_id] = DocumentInfo(
+            self._registry[(document_id, user_id)] = DocumentInfo(
                 document_id=document_id,
                 name=safe_name,
                 path=str(destination),
@@ -199,6 +242,7 @@ class IngestionService:
                 created_at=utc_now_iso(),
                 empty_pages=len(document.empty_pages),
                 looks_medical=looks_medical,
+                user_id=user_id,
             )
             self._save_registry()
 
@@ -217,8 +261,8 @@ class IngestionService:
 
     # -- management ---------------------------------------------------------------
 
-    def reindex(self, document_id: str) -> IngestResult:
-        info = self._registry.get(document_id)
+    def reindex(self, document_id: str, user_id: str) -> IngestResult:
+        info = self._registry.get((document_id, user_id))
         if not info or not Path(info.path).is_file():
             raise DocumentProcessingError(
                 what=f"Cannot re-index document {document_id[:12]} — the original file is "
@@ -226,21 +270,28 @@ class IngestionService:
                 why="The registry points to a file that was moved or deleted.",
                 fix="Upload the file again.",
             )
-        return self.ingest_path(info.path, force=True)
+        return self.ingest_path(info.path, user_id, force=True)
 
-    def remove(self, document_id: str) -> str:
-        removed = self.store.delete_document(document_id)
-        self._registry.pop(document_id, None)
+    def remove(self, document_id: str, user_id: str) -> str:
+        removed = self.store.delete_document(document_id, user_id)
+        self._registry.pop((document_id, user_id), None)
         self._save_registry()
         return f"Removed document {document_id[:12]} ({removed} chunk(s) deleted)."
 
-    def list_documents(self) -> list[DocumentInfo]:
-        return sorted(self._registry.values(), key=lambda i: i.name.lower())
+    def list_documents(self, user_id: str) -> list[DocumentInfo]:
+        return sorted(
+            (info for (_, owner), info in self._registry.items() if owner == user_id),
+            key=lambda i: i.name.lower(),
+        )
 
-    def stats(self) -> dict:
+    def stats(self, user_id: str | None = None) -> dict:
+        """Document/chunk counts. ``user_id=None`` is the whole instance's
+        total, for system-wide diagnostics (health checks) only."""
+        if user_id is None:
+            return {"documents": len(self._registry), "chunks": self.store.count()}
         return {
-            "documents": len(self._registry),
-            "chunks": self.store.count(),
+            "documents": len(self.list_documents(user_id)),
+            "chunks": self.store.count(user_id),
         }
 
 

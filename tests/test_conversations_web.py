@@ -29,7 +29,6 @@ def web_services(settings, ingestion, embeddings, store):
     from apex_ai.runtime import ApexServices
     from apex_ai.security.memory import MemorySafetyPolicy
 
-    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
     retriever = HybridRetriever(store, settings, BM25Index(store))
     memory = ConversationMemory(settings.memory_path, settings.memory_turns)
     query_processor = QueryProcessor(enabled=False)
@@ -50,6 +49,7 @@ def web_services(settings, ingestion, embeddings, store):
         session_ttl_days=settings.session_ttl_days,
     )
     default_local_user = auth.ensure_default_local_account()
+    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", default_local_user.id)
     engine = RagEngine(
         settings=settings,
         store=store,
@@ -627,6 +627,51 @@ def test_browser_upload_rejects_unsupported_type(web_client):
         "/documents/upload", files={"file": ("malware.exe", b"not a doc", "application/octet-stream")}
     )
     assert response.status_code == 415
+
+
+def test_uploaded_documents_are_isolated_between_accounts(web_services):
+    """Phase 55 end-to-end: a real second account, reached through the actual
+    HTTP API (not a direct store call), must never see or retrieve-cite the
+    default account's document, and vice versa."""
+    from fastapi.testclient import TestClient
+
+    from apex_ai.api.server import create_api
+    from apex_ai.memory.conversations import ConversationStore
+
+    conversations = ConversationStore(web_services.settings.conversation_db_path)
+    conversations.backfill_owner(web_services.default_local_user.id)
+    app = create_api(web_services, conversations=conversations)
+
+    default_client = TestClient(app)  # no cookie -> auto-login default account
+    other_client = TestClient(app)
+    signup = other_client.post(
+        "/auth/signup",
+        json={"email": "second-account@example.test", "password": "correct horse battery"},
+    )
+    assert signup.status_code == 201
+
+    content = (DATA_DIR / "burn_care.md").read_bytes()
+    uploaded = other_client.post(
+        "/documents/upload", files={"file": ("burn_care.md", content, "text/markdown")}
+    )
+    assert uploaded.status_code == 200
+
+    default_docs = {d["name"] for d in default_client.get("/documents").json()}
+    other_docs = {d["name"] for d in other_client.get("/documents").json()}
+    assert default_docs == {"sample_first_aid.pdf"}
+    assert other_docs == {"burn_care.md"}
+
+    # A question only the other account's document can answer must come back
+    # unsupported for the default account - never silently cited from a
+    # document it cannot see.
+    stream = events(
+        default_client.post(
+            "/chat/stream",
+            json={"question": "How should burns be cooled?", "request_id": "cross-account"},
+        )
+    )
+    final = next(item for item in stream if item["type"] == "final")
+    assert all("burn_care" not in citation.get("source", "") for citation in final["citations"])
 
 
 def test_generation_manager_supports_stop_and_one_request_per_conversation():

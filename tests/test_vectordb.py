@@ -7,50 +7,81 @@ import pytest
 from apex_ai.core.errors import DatabaseError, EmbeddingMismatchError
 from apex_ai.documents.service import IngestionService
 from apex_ai.vectordb import ChromaVectorStore
-from tests.conftest import DATA_DIR
+from tests.conftest import DATA_DIR, USER
+
+OTHER_USER = "user-2"
 
 
 def test_ingest_and_search_roundtrip(settings, ingestion, store):
-    result = ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
+    result = ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
     assert result.status == "indexed"
     assert result.chunks > 0
 
-    hits = store.search("fever in adults temperature", k=3)
+    hits = store.search("fever in adults temperature", USER, k=3)
     assert hits
     assert any("fever" in h.text.lower() for h in hits)
     assert all(h.metadata.get("page") for h in hits)
 
 
 def test_duplicate_upload_is_skipped(ingestion):
-    first = ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
-    second = ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
+    first = ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
+    second = ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
     assert first.status == "indexed"
     assert second.status == "duplicate"
 
 
 def test_reindex_replaces_chunks(ingestion, store):
-    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
+    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
     result = ingestion.reindex(
-        next(d.document_id for d in ingestion.list_documents())
+        next(d.document_id for d in ingestion.list_documents(USER)), USER
     )
     assert result.status == "indexed"
-    assert store.count() == result.chunks
+    assert store.count(USER) == result.chunks
 
 
 def test_delete_document_removes_all_chunks(ingestion, store):
-    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
-    document_id = ingestion.list_documents()[0].document_id
-    ingestion.remove(document_id)
-    assert store.count() == 0
-    assert ingestion.list_documents() == []
+    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
+    document_id = ingestion.list_documents(USER)[0].document_id
+    ingestion.remove(document_id, USER)
+    assert store.count(USER) == 0
+    assert ingestion.list_documents(USER) == []
 
 
 def test_list_documents_reports_pages_and_chunks(ingestion):
-    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
-    docs = ingestion.list_documents()
+    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
+    docs = ingestion.list_documents(USER)
     assert len(docs) == 1
     assert docs[0].pages == 2
     assert docs[0].chunks >= 2
+
+
+def test_documents_are_isolated_between_accounts(ingestion, store):
+    """Phase 55: two accounts uploading identical bytes each get their own
+    indexed copy - a global content-hash dedup would mean the second
+    account's upload silently attaches to the first account's document,
+    which is exactly the cross-account leak this phase closes."""
+    mine = ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
+    theirs = ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", OTHER_USER)
+
+    assert mine.status == "indexed"
+    assert theirs.status == "indexed"  # not "duplicate": dedup is per-account
+    assert mine.document_id == theirs.document_id  # same bytes, same content hash
+
+    assert len(ingestion.list_documents(USER)) == 1
+    assert len(ingestion.list_documents(OTHER_USER)) == 1
+    assert store.count(USER) == mine.chunks
+    assert store.count(OTHER_USER) == theirs.chunks
+
+    hits = store.search("fever in adults temperature", USER, k=5)
+    assert all(h.metadata.get("user_id") == USER for h in hits)
+    assert store.has_document(mine.document_id, USER)
+    assert store.has_document(theirs.document_id, OTHER_USER)
+
+    # One account's delete never touches the other's copy.
+    ingestion.remove(mine.document_id, USER)
+    assert ingestion.list_documents(USER) == []
+    assert len(ingestion.list_documents(OTHER_USER)) == 1
+    assert store.count(OTHER_USER) == theirs.chunks
 
 
 def test_embedding_model_mismatch_is_detected(settings, embeddings, store):
@@ -114,7 +145,7 @@ def test_medical_heuristic_flags_non_medical_content(ingestion):
     assert is_likely_medical_document("fever patient diagnosis treatment drug dose")
     assert not is_likely_medical_document("car engine spark plugs and tire pressure")
 
-    result = ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
+    result = ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
     assert result.status == "indexed"
 
 

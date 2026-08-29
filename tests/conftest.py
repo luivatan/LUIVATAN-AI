@@ -29,6 +29,10 @@ from apex_ai.vectordb import ChromaVectorStore  # noqa: E402
 
 DATA_DIR = Path(__file__).parent / "data"
 
+# Shared default account for tests that don't care about multi-tenancy. Tests
+# that specifically prove isolation (Phase 55) use their own second user_id.
+USER = "user-1"
+
 
 class FakeLLM:
     """Deterministic stand-in for an LLM provider.
@@ -112,8 +116,8 @@ def ingestion(settings, store):
 @pytest.fixture()
 def engine(settings, store, ingestion):
     """A fully-wired engine with hashing embeddings + FakeLLM."""
-    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
-    ingestion.ingest_path(DATA_DIR / "burn_care.md")
+    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
+    ingestion.ingest_path(DATA_DIR / "burn_care.md", USER)
 
     store_for_bm25 = store
     retriever = HybridRetriever(store_for_bm25, settings, BM25Index(store_for_bm25))
@@ -127,4 +131,5 @@ def engine(settings, store, ingestion):
         llm_provider=FakeLLM(),
         query_processor=QueryProcessor(enabled=False),
         medical_mode=True,
+        user_id=USER,
     )

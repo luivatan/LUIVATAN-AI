@@ -8,7 +8,7 @@ from apex_ai.core.types import RetrievedChunk
 from apex_ai.retrieval.keyword import BM25Index, tokenize
 from apex_ai.retrieval.pipeline import HybridRetriever, rrf_merge
 from apex_ai.retrieval.reranker import LexicalReranker, NoReranker, make_reranker
-from tests.conftest import DATA_DIR
+from tests.conftest import DATA_DIR, USER
 
 
 def _chunk(id_, text, similarity=0.0, metadata=None):
@@ -26,20 +26,20 @@ def test_bm25_finds_exact_terms(ingestion, store):
     # Several documents so BM25's IDF is meaningful (with only 2 chunks the
     # idf of any term is ~0 by construction).
     for name in ("sample_first_aid.pdf", "burn_care.md", "first_aid_faq.json"):
-        ingestion.ingest_path(DATA_DIR / name)
+        ingestion.ingest_path(DATA_DIR / name, USER)
     index = BM25Index(store)
     # A rare term that appears in exactly one chunk → strong BM25 signal.
-    hits = index.search("intravenous", k=3)
+    hits = index.search("intravenous", USER, k=3)
     assert hits
     assert any("intravenous" in h.text.lower() for h in hits)
 
 
 def test_bm25_rebuilds_after_ingestion(ingestion, store):
     index = BM25Index(store)
-    assert index.search("fever") == []
+    assert index.search("fever", USER) == []
 
-    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
-    assert index.search("fever in adults", k=2), "index must rebuild after store change"
+    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
+    assert index.search("fever in adults", USER, k=2), "index must rebuild after store change"
 
 
 def test_rrf_merge_dedupes_and_fuses():
@@ -55,8 +55,21 @@ def test_rrf_merge_dedupes_and_fuses():
     assert ids.index("2") < ids.index("3")
 
 
+def test_bm25_index_is_isolated_between_accounts(ingestion, store):
+    """Phase 55: BM25 caches one sub-index per account (built from that
+    account's own chunks only), so a keyword hit for one account's private
+    document must never surface for another account searching the same term."""
+    other_user = "user-2"
+    document = DATA_DIR / "sample_first_aid.pdf"
+    ingestion.ingest_path(document, other_user)
+
+    index = BM25Index(store)
+    assert index.search("fever", other_user)
+    assert index.search("fever", USER) == []  # USER never ingested anything
+
+
 def test_hybrid_retriever_combines_stages(engine):
-    candidates = engine.retriever.retrieve(["fever temperature adults"], top_k=5)
+    candidates = engine.retriever.retrieve(["fever temperature adults"], USER, top_k=5)
     assert 0 < len(candidates) <= 5
     ids = [c.chunk_id for c in candidates]
     assert len(ids) == len(set(ids))

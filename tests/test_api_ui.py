@@ -22,7 +22,6 @@ def wired_services(settings, ingestion, embeddings, store):
     from apex_ai.retrieval.reranker import LexicalReranker
     from apex_ai.runtime import ApexServices
 
-    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
     retriever = HybridRetriever(store, settings, BM25Index(store))
     memory = ConversationMemory(settings.memory_path, settings.memory_turns)
     auth = AuthService(
@@ -31,6 +30,7 @@ def wired_services(settings, ingestion, embeddings, store):
         session_ttl_days=settings.session_ttl_days,
     )
     default_local_user = auth.ensure_default_local_account()
+    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", default_local_user.id)
     engine = RagEngine(
         settings=settings, store=store, retriever=retriever,
         reranker=LexicalReranker(), memory=memory, llm_provider=FakeLLM(),

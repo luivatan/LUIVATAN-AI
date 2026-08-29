@@ -94,8 +94,8 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
 - **Real accounts** — Argon2id password hashing, server-side sessions, sign-up/sign-in
   at `/login`. A single local machine needs no login screen by default (an
   auto-provisioned local account); a real sign-in always takes precedence.
-  Conversations and long-term memory are fully isolated per account (Phase 54/55);
-  document isolation is not implemented yet — see Limitations.
+  Conversations, long-term memory, and uploaded documents (vector index, keyword
+  index, and upload directory) are all fully isolated per account (Phase 54/55).
 - **Compatibility interfaces** — the original JSON routes, terminal chat, and preserved
   Gradio interface remain available.
 
@@ -218,7 +218,12 @@ storage-boundary safety policy in
 | `GET /models`, `POST /models/select` | existing model manager |
 | `GET /app-config` | non-secret runtime status for Settings |
 
-The compatibility endpoints `/query` and `/documents/ingest` remain unchanged.
+The compatibility endpoints `/query` and `/documents/ingest` keep their request/response
+shape unchanged. `/documents/ingest` now requires a user like every other document route
+(falling back to the default local account under `APEX_AUTO_LOGIN_LOCAL=1`, same as the
+rest of the app); `/query` alone stays genuinely ungated — it always reads and writes the
+default local account's data through the one singleton engine built at startup, the same
+boundary documented below.
 
 ## Accounts
 
@@ -237,11 +242,15 @@ default. Set `APEX_AUTO_LOGIN_LOCAL=0` to require real sign-in for every request
 | `POST /auth/logout` | invalidate the session server-side and clear the cookie |
 | `GET /auth/me` | current user (falls back to the default local account when `APEX_AUTO_LOGIN_LOCAL=1`) |
 
-Conversations and long-term memory are scoped per account (Phase 54/55): every
-store method checks ownership, and a missing/mismatched owner is always treated
-as "not found," never a distinct "forbidden" signal. **Not yet done:** documents
-(the ChromaDB vector store, BM25 index, and upload directory) remain global
-across every account — see Limitations.
+Conversations, long-term memory, and documents are all scoped per account
+(Phase 54/55): every store method checks ownership, and a missing/mismatched
+owner is always treated as "not found," never a distinct "forbidden" signal.
+Two accounts uploading byte-identical files each get their own indexed copy
+(the ChromaDB vector store, the BM25 keyword index, and the upload directory
+are all partitioned by account) rather than silently sharing one — see
+[`docs/PHASE54-55_AUTHORIZATION_AND_ISOLATION.md`](docs/PHASE54-55_AUTHORIZATION_AND_ISOLATION.md)
+for the full design. Project isolation (Phase 56) stays out of scope, same as
+Phase 48 — there is no project/workspace data model anywhere yet to isolate.
 
 ## Configuration
 
@@ -383,13 +392,12 @@ setup walkthrough and the roadmap-phase development workflow this project follow
   provider tokenizers can differ.
 - Existing chunks remain compatible but need re-indexing to gain schema-v2 page ranges.
 - Real accounts, password hashing, and sessions exist (Phase 51/52 — see Accounts
-  below). Conversations and long-term memory are isolated per account (Phase
-  54/55), but documents are not: the vector store, BM25 index, and upload
-  directory remain global, so every account can currently retrieve and cite
-  every uploaded document regardless of who uploaded it. Do not expose the
-  server to an untrusted network or host multiple real accounts with sensitive
-  documents on one instance until document isolation lands; subscriptions
-  remain fully deferred.
+  below). Conversations, long-term memory, and documents (vector store, BM25 index,
+  upload directory) are all isolated per account (Phase 54/55). The `/query`
+  compatibility endpoint is the one deliberate exception: it always reads and writes
+  the auto-provisioned default local account's data through a single engine built
+  at startup, by design (see Accounts) — do not expose it on a shared/multi-account
+  deployment expecting per-caller isolation. Subscriptions remain fully deferred.
 - Stop generation is cooperative and takes effect at the next token yielded by the
   configured provider. A provider blocked inside a long native call cannot be interrupted
   until it yields control.

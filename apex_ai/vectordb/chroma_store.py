@@ -174,6 +174,34 @@ class ChromaVectorStore:
 
     # -- write path -----------------------------------------------------------
 
+    def backfill_owner(self, user_id: str) -> int:
+        """Assign every pre-Phase-55 chunk (no ``user_id`` metadata at all) to
+        ``user_id``. Idempotent: chunks that already carry an owner are left
+        untouched. Mirrors ``ConversationStore``/``LongTermMemoryStore``'s
+        ``backfill_owner`` — existing installations keep their indexed
+        documents instead of them silently becoming unreachable once search
+        starts filtering by owner."""
+        try:
+            result = self.collection.get(include=["metadatas"])
+        except Exception as error:
+            raise DatabaseError(
+                what="Could not read chunk metadata for the ownership backfill.",
+                why=str(error),
+                fix="Check logs/apex.log.",
+            ) from error
+
+        stale_ids = []
+        stale_metadatas = []
+        for chunk_id, metadata in zip(result.get("ids", []), result.get("metadatas", [])):
+            metadata = metadata or {}
+            if not metadata.get("user_id"):
+                metadata["user_id"] = user_id
+                stale_ids.append(chunk_id)
+                stale_metadatas.append(metadata)
+        if stale_ids:
+            self.collection.update(ids=stale_ids, metadatas=stale_metadatas)
+        return len(stale_ids)
+
     def upsert_chunks(self, chunks: list[Chunk]) -> int:
         """Embed + persist chunks. Returns the number stored."""
         if not chunks:
@@ -211,9 +239,9 @@ class ChromaVectorStore:
 
     # -- read path ------------------------------------------------------------
 
-    def search(self, query_text: str, k: int = 5) -> list[RetrievedChunk]:
-        """Vector search; returns chunks sorted by cosine similarity."""
-        count = self.count()
+    def search(self, query_text: str, user_id: str, k: int = 5) -> list[RetrievedChunk]:
+        """Vector search scoped to ``user_id``; sorted by cosine similarity."""
+        count = self.count(user_id)
         if count == 0:
             return []
         k = min(k, count)
@@ -222,6 +250,7 @@ class ChromaVectorStore:
             result = self.collection.query(
                 query_embeddings=[query_embedding],
                 n_results=k,
+                where={"user_id": user_id},
                 include=["documents", "metadatas", "distances"],
             )
         except Exception as error:
@@ -249,10 +278,12 @@ class ChromaVectorStore:
             )
         return chunks
 
-    def get_all_chunks(self) -> list[RetrievedChunk]:
-        """Every chunk (used to build the BM25 keyword index)."""
+    def get_all_chunks(self, user_id: str) -> list[RetrievedChunk]:
+        """Every chunk owned by ``user_id`` (used to build the BM25 keyword index)."""
         try:
-            result = self.collection.get(include=["documents", "metadatas"])
+            result = self.collection.get(
+                where={"user_id": user_id}, include=["documents", "metadatas"]
+            )
         except Exception as error:
             raise DatabaseError(
                 what="Could not read chunks from the vector database.",
@@ -271,18 +302,21 @@ class ChromaVectorStore:
 
     # -- document management -----------------------------------------------------
 
-    def has_document(self, document_id: str) -> bool:
+    def has_document(self, document_id: str, user_id: str) -> bool:
         try:
-            result = self.collection.get(where={"document_id": document_id}, limit=1)
+            result = self.collection.get(
+                where={"$and": [{"document_id": document_id}, {"user_id": user_id}]}, limit=1
+            )
             return bool(result.get("ids"))
         except Exception:
             # some Chroma versions raise on empty where-results
             return False
 
-    def delete_document(self, document_id: str) -> int:
+    def delete_document(self, document_id: str, user_id: str) -> int:
+        where = {"$and": [{"document_id": document_id}, {"user_id": user_id}]}
         try:
             before = self.collection.count()
-            self.collection.delete(where={"document_id": document_id})
+            self.collection.delete(where=where)
             removed = before - self.collection.count()
         except Exception as error:
             raise DatabaseError(
@@ -294,10 +328,10 @@ class ChromaVectorStore:
         log.info("Deleted document %s (%d chunks removed)", document_id[:12], removed)
         return removed
 
-    def list_documents(self) -> list[DocumentRecord]:
-        """Aggregate chunk metadata into one record per document."""
+    def list_documents(self, user_id: str) -> list[DocumentRecord]:
+        """Aggregate chunk metadata owned by ``user_id`` into one record per document."""
         try:
-            result = self.collection.get(include=["metadatas"])
+            result = self.collection.get(where={"user_id": user_id}, include=["metadatas"])
         except Exception as error:
             raise DatabaseError(
                 what="Could not list documents.",
@@ -328,9 +362,14 @@ class ChromaVectorStore:
                     )
         return sorted(records.values(), key=lambda r: r.name.lower())
 
-    def count(self) -> int:
+    def count(self, user_id: str | None = None) -> int:
+        """Chunk count. ``user_id=None`` is the whole instance's total — only
+        for system-wide diagnostics (health checks); it must never back a
+        per-user search bound, which always passes a real ``user_id``."""
         try:
-            return self.collection.count()
+            if user_id is None:
+                return self.collection.count()
+            return len(self.collection.get(where={"user_id": user_id}, include=[]).get("ids", []))
         except Exception as error:
             raise DatabaseError(
                 what="Could not count chunks in the vector database.",

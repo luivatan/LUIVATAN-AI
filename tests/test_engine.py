@@ -10,7 +10,7 @@ from apex_ai.rag.context_builder import build_context
 from apex_ai.rag.engine import RagEngine
 from apex_ai.rag.prompts import INSUFFICIENT_EVIDENCE_ANSWER, build_messages
 from apex_ai.rag.query_processing import QueryProcessor
-from tests.conftest import DATA_DIR, FakeLLM
+from tests.conftest import DATA_DIR, USER, FakeLLM
 
 
 def test_ask_returns_answer_with_citations(engine):
@@ -62,7 +62,7 @@ def test_low_confidence_refuses_without_llm_call(settings, store, ingestion):
     from apex_ai.retrieval.pipeline import HybridRetriever
     from apex_ai.retrieval.reranker import LexicalReranker
 
-    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf")
+    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
     strict = replace(settings, min_similarity=0.99)
 
     class ExplodingLLM:
@@ -79,6 +79,7 @@ def test_low_confidence_refuses_without_llm_call(settings, store, ingestion):
         reranker=LexicalReranker(),
         memory=None,
         llm_provider=ExplodingLLM(),
+        user_id=USER,
     )
     result = engine.ask("What is a fever in adults?")
     assert result.insufficient_evidence
