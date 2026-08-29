@@ -38,6 +38,7 @@ DEVELOPMENT_DEPENDENCIES = {
     "numpy",
     "packaging",
     "pytest",
+    "ruff",
 }
 
 IMPORT_DISTRIBUTIONS = {

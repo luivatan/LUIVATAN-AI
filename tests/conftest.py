@@ -2,7 +2,9 @@
 
 The whole suite runs **offline and fast**: it uses the deterministic
 HashingEmbeddingProvider and a FakeLLM — no model downloads, no network.
-A separate opt-in marker (`integration`) covers the real models.
+An `integration` marker is registered in ``pyproject.toml`` for future tests
+that need real downloaded models/network; none exist yet, so it is not
+currently selected or excluded by any default options.
 """
 
 from __future__ import annotations

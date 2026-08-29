@@ -10,3 +10,4 @@ fpdf2>=2.7,<3         # regenerate committed PDF fixtures
 # Generate scripts/make_tiny_gguf.py's structural provider smoke-test artifact.
 gguf>=0.19,<0.20
 numpy>=1.26,<3
+ruff>=0.9,<1             # linter used to verify every phase; now pinned instead of ambient

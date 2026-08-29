@@ -1,0 +1,11 @@
+# Apex AI — tool configuration only (this repo is not packaged/published; see
+# README "Installation" for the actual run/install workflow). Phase 9 (Testing
+# Foundation) adds this so pytest discovery and the `integration` marker
+# conftest.py already documents are backed by real configuration instead of
+# only being implied by the README's example command.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: opt-in tests that need real downloaded models/network; not run by default (none exist yet — see tests/conftest.py).",
+]

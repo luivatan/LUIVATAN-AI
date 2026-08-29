@@ -281,17 +281,19 @@ benchmark.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests/ -q
+python -m pytest tests/ -q       # or: python -m pytest -q (testpaths is set in pyproject.toml)
 ```
 
-143 tests cover extraction, page/section-safe chunking, metadata, embeddings,
+234 tests cover extraction, page/section-safe chunking, metadata, embeddings,
 vector-store operations, duplicate detection, exact and semantic retrieval, multi-query
 fusion, reranker/channel fallbacks, evidence gating, budget-safe document and conversation
 context, citations, configuration, memory, persistent conversation CRUD/search,
-streaming/regeneration, safe uploads, developer-debug gating, responsive UI assets, the
-API, and both interface entry points. Automated tests run fully offline with deterministic
-hashing embeddings and a deterministic test LLM; these verify mechanics, not production
-model quality.
+streaming/regeneration, safe uploads, developer-debug gating, live health checks,
+responsive UI assets, the API, and both interface entry points. Automated tests run fully
+offline with deterministic hashing embeddings and a deterministic test LLM; these verify
+mechanics, not production model quality. `.github/workflows/tests.yml` runs this same
+suite plus `ruff` on every push and pull request (see
+[`docs/PHASE9_TESTING_FOUNDATION.md`](docs/PHASE9_TESTING_FOUNDATION.md)).
 
 ## Development
 

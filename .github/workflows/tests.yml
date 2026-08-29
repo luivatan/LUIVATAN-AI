@@ -1,0 +1,38 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      # Hard gate: syntax errors and undefined names anywhere in the repo.
+      # A broader style/lint pass runs below as a non-blocking report; see
+      # docs/PHASE9_TESTING_FOUNDATION.md for why the two are split.
+      - name: Ruff (syntax/undefined-name gate)
+        run: ruff check --select E9,F63,F7,F82 .
+
+      - name: Ruff (full report, non-blocking)
+        run: ruff check .
+        continue-on-error: true
+
+      - name: pytest
+        run: python -m pytest tests/ -q
