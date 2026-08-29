@@ -16,6 +16,17 @@ from apex_ai import APP_NAME, __version__
 from apex_ai.api.chat import GenerationManager, create_chat_router
 from apex_ai.api.errors import install_error_handlers, service_not_ready_error
 from apex_ai.api.memory import create_memory_router
+from apex_ai.api.schemas import (
+    AppConfigOut,
+    DeletedCountOut,
+    DocumentOut,
+    HealthOut,
+    IngestOut,
+    ModelEntryOut,
+    ModelSelectOut,
+    QueryOut,
+    RemovedOut,
+)
 from apex_ai.api.uploads import create_upload_router
 from apex_ai.memory.conversations import ConversationStore
 from apex_ai.models.manager import ModelManager
@@ -65,7 +76,7 @@ def create_api(
         if not services.ready:
             raise service_not_ready_error()
 
-    @app.get("/health")
+    @app.get("/health", response_model=HealthOut, response_model_exclude_none=True)
     def health():
         payload = {
             "app": APP_NAME,
@@ -88,7 +99,7 @@ def create_api(
             payload["startup_error"] = services.startup_error
         return payload
 
-    @app.get("/app-config")
+    @app.get("/app-config", response_model=AppConfigOut)
     def app_config():
         stats = services.ingestion.stats() if services.ingestion else {"documents": 0, "chunks": 0}
         configured_model = services.settings.model_path
@@ -113,22 +124,22 @@ def create_api(
             **stats,
         }
 
-    @app.get("/models")
+    @app.get("/models", response_model=list[ModelEntryOut])
     def models():
         manager = ModelManager(services.settings)
         return [vars(entry) | {"path": str(entry.path)} for entry in manager.discover()]
 
-    @app.post("/models/select")
+    @app.post("/models/select", response_model=ModelSelectOut)
     def select_model(payload: ModelSelection):
         path = services.select_model(payload.name)
         return {"selected": path}
 
-    @app.get("/documents")
+    @app.get("/documents", response_model=list[DocumentOut])
     def documents():
         _ensure_ready()
         return [document.as_dict() for document in services.ingestion.list_documents()]
 
-    @app.post("/documents/ingest")
+    @app.post("/documents/ingest", response_model=IngestOut)
     def ingest(payload: IngestRequest):
         """Local automation endpoint. Browsers use safe multipart /documents/upload."""
         _ensure_ready()
@@ -141,12 +152,12 @@ def create_api(
             "warnings": result.warnings,
         }
 
-    @app.delete("/documents/{document_id}")
+    @app.delete("/documents/{document_id}", response_model=RemovedOut)
     def delete_document(document_id: str):
         _ensure_ready()
         return {"message": services.ingestion.remove(document_id)}
 
-    @app.post("/query")
+    @app.post("/query", response_model=QueryOut)
     def query(payload: QueryRequest):
         """Backward-compatible non-streaming endpoint."""
         _ensure_ready()
@@ -176,7 +187,7 @@ def create_api(
     app.include_router(create_memory_router(services))
     app.include_router(create_chat_router(services, conversations, app.state.generations))
 
-    @app.delete("/conversations")
+    @app.delete("/conversations", response_model=DeletedCountOut)
     def delete_all_conversations():
         return {"deleted": conversations.clear()}
 

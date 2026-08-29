@@ -78,6 +78,35 @@ def test_health_reports_memory_availability_without_exposing_contents(
     assert canary not in response.text
 
 
+def test_health_omits_stats_when_not_ready(settings):
+    """Phase 7: response_model_exclude_none must not turn absent fields into nulls."""
+    from fastapi.testclient import TestClient
+
+    from apex_ai.api.server import create_api
+    from apex_ai.runtime import ApexServices
+
+    broken = ApexServices(settings=settings, startup_error="MODEL NOT FOUND")
+    client = TestClient(create_api(broken, include_web=False))
+
+    response = client.get("/health")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ready"] is False
+    assert payload["startup_error"] == "MODEL NOT FOUND"
+    assert "documents" not in payload
+    assert "chunks" not in payload
+
+
+def test_openapi_documents_response_schemas(api_client):
+    """Phase 7 (API Structure): routes publish real response schemas, not bare dicts."""
+    schema = api_client.get("/openapi.json").json()
+    conversations_get = schema["paths"]["/conversations"]["get"]
+    response_schema = conversations_get["responses"]["200"]["content"]["application/json"]["schema"]
+    assert "ConversationOut" in str(response_schema)
+    assert "ConversationOut" in schema["components"]["schemas"]
+    assert "HealthOut" in schema["components"]["schemas"]
+
+
 def test_query_endpoint_returns_citations(api_client):
     response = api_client.post(
         "/query", json={"question": "What temperature is a fever in adults?"}

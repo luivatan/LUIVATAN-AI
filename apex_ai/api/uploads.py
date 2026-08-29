@@ -10,6 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, File, UploadFile
 
 from apex_ai.api.errors import APIError, service_not_ready_error
+from apex_ai.api.schemas import IngestOut, UploadOut
 from apex_ai.core.logging import get_logger
 from apex_ai.documents.extraction import SUPPORTED_EXTENSIONS
 from apex_ai.security.files import sanitize_filename
@@ -20,7 +21,7 @@ log = get_logger("api.uploads")
 def create_upload_router(services) -> APIRouter:
     router = APIRouter(tags=["documents"])
 
-    @router.post("/documents/upload")
+    @router.post("/documents/upload", response_model=UploadOut)
     async def upload_document(file: Annotated[UploadFile, File()]):
         staging: Path | None = None
         try:
@@ -87,7 +88,7 @@ def create_upload_router(services) -> APIRouter:
             if staging is not None:
                 shutil.rmtree(staging, ignore_errors=True)
 
-    @router.post("/documents/{document_id}/reindex")
+    @router.post("/documents/{document_id}/reindex", response_model=IngestOut)
     def reindex_document(document_id: str):
         if not services.ready:
             raise service_not_ready_error()

@@ -22,6 +22,12 @@ from apex_ai.api.errors import (
     problem_from_apex,
     service_not_ready_error,
 )
+from apex_ai.api.schemas import (
+    ConversationDetailOut,
+    ConversationOut,
+    DeletedOut,
+    StopOut,
+)
 from apex_ai.core.errors import ApexError
 from apex_ai.core.logging import get_logger
 from apex_ai.memory.conversations import ConversationMemoryAdapter, ConversationStore
@@ -124,15 +130,15 @@ def create_chat_router(
     router = APIRouter(tags=["chat"])
     generations = generations or GenerationManager()
 
-    @router.get("/conversations")
+    @router.get("/conversations", response_model=list[ConversationOut])
     def list_conversations(search: str = ""):
         return [item.to_dict() for item in conversations.list(search=search)]
 
-    @router.post("/conversations", status_code=201)
+    @router.post("/conversations", status_code=201, response_model=ConversationOut)
     def create_conversation(payload: ConversationCreate):
         return conversations.create(payload.title).to_dict()
 
-    @router.get("/conversations/{conversation_id}")
+    @router.get("/conversations/{conversation_id}", response_model=ConversationDetailOut)
     def get_conversation(conversation_id: str):
         conversation = conversations.get(conversation_id)
         if conversation is None:
@@ -142,7 +148,7 @@ def create_chat_router(
             "messages": [message.to_dict() for message in conversations.messages(conversation_id)],
         }
 
-    @router.patch("/conversations/{conversation_id}")
+    @router.patch("/conversations/{conversation_id}", response_model=ConversationOut)
     def rename_conversation(conversation_id: str, payload: ConversationRename):
         try:
             return conversations.rename(conversation_id, payload.title).to_dict()
@@ -151,13 +157,13 @@ def create_chat_router(
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
-    @router.delete("/conversations/{conversation_id}")
+    @router.delete("/conversations/{conversation_id}", response_model=DeletedOut)
     def delete_conversation(conversation_id: str):
         if not conversations.delete(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found.")
         return {"deleted": True}
 
-    @router.post("/chat/stop")
+    @router.post("/chat/stop", response_model=StopOut)
     def stop_generation(payload: StopRequest):
         return {"stopping": generations.request_stop(payload.request_id)}
 

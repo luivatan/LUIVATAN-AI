@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from apex_ai.api.errors import APIError
+from apex_ai.api.schemas import ApproveMemoryOut, MemoryCandidateOut, RejectMemoryOut
 from apex_ai.core.errors import ApexError
 
 
@@ -22,14 +23,14 @@ def create_memory_router(services) -> APIRouter:
             )
         return service
 
-    @router.get("/candidates")
+    @router.get("/candidates", response_model=list[MemoryCandidateOut])
     def list_candidates():
         try:
             return [item.to_dict() for item in confirmation_service().pending()]
         except ApexError as error:
             raise APIError.from_apex(error, status_code=503) from error
 
-    @router.post("/candidates/{proposal_id}/approve")
+    @router.post("/candidates/{proposal_id}/approve", response_model=ApproveMemoryOut)
     def approve_candidate(proposal_id: str):
         try:
             memory = confirmation_service().approve(proposal_id)
@@ -44,7 +45,7 @@ def create_memory_router(services) -> APIRouter:
         except ApexError as error:
             raise APIError.from_apex(error, status_code=400) from error
 
-    @router.post("/candidates/{proposal_id}/reject")
+    @router.post("/candidates/{proposal_id}/reject", response_model=RejectMemoryOut)
     def reject_candidate(proposal_id: str):
         try:
             if not confirmation_service().reject(proposal_id):
