@@ -172,6 +172,39 @@ def test_login_page_is_served_with_the_same_security_headers(web_client):
     assert "authEmail" in response.text
     assert "authPassword" in response.text
     assert "default-src 'self'" in response.headers["content-security-policy"]
+
+
+def test_landing_page_is_public_and_has_the_same_security_headers(web_client):
+    response = web_client.get("/welcome")
+    assert response.status_code == 200
+    assert "default-src 'self'" in response.headers["content-security-policy"]
+
+
+def test_landing_page_pricing_matches_the_real_plan_data(web_client):
+    """Phase 96: the pricing section is rendered from apex_ai.billing.plans,
+    not hardcoded - this pins that behavior so the two can never silently
+    drift apart."""
+    from apex_ai.billing.plans import PLANS
+
+    response = web_client.get("/welcome")
+    text = response.text
+    for plan in PLANS.values():
+        assert plan.name in text
+    assert "Free" in text
+    assert "$19/mo" in text
+    assert "$99/mo" in text
+    # Free plan's real capacity limit should appear verbatim.
+    assert "20 documents" in text
+    # Business plan's real unlimited fields should appear verbatim.
+    assert "Unlimited documents" in text
+
+
+def test_landing_page_never_implies_a_working_checkout(web_client):
+    """No fake billing state: the page must not claim payment happens here."""
+    response = web_client.get("/welcome")
+    text_lower = response.text.lower()
+    for forbidden in ("credit card", "checkout", "enter payment"):
+        assert forbidden not in text_lower
     login_js = web_client.get("/assets/login.js")
     assert login_js.status_code == 200
     assert "auth/login" in login_js.text and "auth/signup" in login_js.text

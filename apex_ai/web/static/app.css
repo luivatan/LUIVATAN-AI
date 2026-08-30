@@ -350,4 +350,7 @@ kbd { border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; bac
 .auth-submit[aria-busy="true"] { opacity: .7; pointer-events: none; }
 .auth-toggle { width: 100%; justify-content: center; margin-top: 16px; font-size: 12.5px; }
 .auth-toggle b { color: var(--accent); font-weight: 650; }
+.auth-back-link { margin: 18px 0 0; text-align: center; font-size: 12.5px; }
+.auth-back-link a { color: var(--text-3); text-decoration: none; }
+.auth-back-link a:hover { color: var(--text-2); }
 @media (prefers-reduced-motion: reduce) { *,*::before,*::after { animation-duration:.01ms!important; animation-iteration-count:1!important; transition-duration:.01ms!important; scroll-behavior:auto!important; } }

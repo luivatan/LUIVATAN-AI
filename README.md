@@ -100,6 +100,9 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   database (via SQLite's own online backup API), the vector store, uploads, and the JSON
   registries, with a checksum manifest `--verify` proves is byte-for-byte restorable
   before reporting success.
+- **Public landing page** (Phase 96) — `GET /welcome` explains the product and pricing
+  to signed-out visitors, with pricing rendered live from the real plan data so it can
+  never drift from what the product actually enforces.
 - **Bounded conversation context** — newest complete turns are selected under configurable
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.
@@ -444,6 +447,20 @@ reported as good once it's proven byte-for-byte restorable, not merely
 existing directory; it always extracts into a new location so you can
 inspect the result (or swap it into place yourself, after stopping the
 running application) rather than silently clobbering live data.
+
+## Landing page (Phase 96)
+
+`GET /welcome` serves a public marketing page — problem/solution, real
+product features, and pricing — separate from the authenticated app
+shell at `/`. The pricing section is rendered from the real plan data in
+`apex_ai/billing/plans.py` on every request rather than hardcoded in the
+template, so it can never drift out of sync with what the product
+actually enforces. Because billing integration itself is deliberately
+not connected (see `docs/PHASE85_BILLING_INTEGRATION_DECISION.md`),
+every plan's call to action leads to the same real sign-up flow at
+`/login`, and the page says plainly that self-serve upgrades to Pro or
+Business aren't available yet rather than implying a checkout that
+doesn't exist.
 
 ## Evaluation
 

@@ -5,9 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from apex_ai.web.landing import render_landing_html
 
 _WEB_ROOT = Path(__file__).resolve().parent
 _STATIC = _WEB_ROOT / "static"
@@ -61,6 +63,14 @@ def mount_web_ui(app: FastAPI) -> None:
             media_type="text/html",
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.get("/welcome", include_in_schema=False)
+    def web_landing():
+        # Phase 96: the public marketing page, separate from the authenticated
+        # app shell at "/". Rendered from real plan data on every request
+        # rather than cached as a static file, so pricing can never drift
+        # from what apex_ai.billing.plans actually defines.
+        return HTMLResponse(render_landing_html())
 
 
 def launch(services=None, **uvicorn_options) -> None:

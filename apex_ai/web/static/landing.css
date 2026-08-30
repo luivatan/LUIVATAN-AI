@@ -1,0 +1,63 @@
+/* Apex AI public landing page (Phase 96). Relies on app.css's :root tokens
+   and shared button/brand classes; only landing-specific layout lives here. */
+
+body { background: var(--bg); color: var(--text); margin: 0; }
+
+.landing-nav {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px clamp(20px, 5vw, 64px); border-bottom: 1px solid var(--border);
+}
+.landing-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); }
+.landing-brand .brand-name { font-size: 15px; font-weight: 650; }
+.landing-nav-links { display: flex; align-items: center; gap: 22px; }
+.landing-nav-links a:not(.primary-button) { color: var(--text-2); text-decoration: none; font-size: 13.5px; font-weight: 550; }
+.landing-nav-links a:not(.primary-button):hover { color: var(--text); }
+.landing-nav-links .primary-button { text-decoration: none; padding: 0 18px; }
+
+.landing-main { max-width: 1080px; margin: 0 auto; padding: 0 clamp(20px, 5vw, 64px); }
+
+.landing-hero { text-align: center; padding: clamp(56px, 10vw, 108px) 0 64px; }
+.landing-hero h1 {
+  font-size: clamp(30px, 4.5vw, 48px); font-weight: 720; letter-spacing: -.03em;
+  line-height: 1.12; margin: 0 auto 20px; max-width: 780px;
+}
+.landing-subtext { color: var(--text-2); font-size: 15.5px; line-height: 1.65; max-width: 620px; margin: 0 auto; }
+.landing-cta-row { display: flex; justify-content: center; gap: 12px; margin-top: 32px; flex-wrap: wrap; }
+.landing-cta { text-decoration: none; padding: 0 22px; font-size: 14px; }
+
+.landing-section { padding: 56px 0; border-top: 1px solid var(--border); }
+.landing-section h2 {
+  font-size: clamp(22px, 3vw, 30px); font-weight: 680; letter-spacing: -.02em;
+  text-align: center; margin: 0 0 36px;
+}
+
+.landing-feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+.landing-feature {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 22px;
+}
+.landing-feature h3 { margin: 0 0 8px; font-size: 15.5px; font-weight: 650; }
+.landing-feature p { margin: 0; color: var(--text-2); font-size: 13.5px; line-height: 1.6; }
+
+.landing-pricing-note { margin-bottom: 32px; }
+.landing-pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; }
+
+.plan-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 26px 22px; display: flex; flex-direction: column; text-align: center;
+}
+.plan-card-highlight { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.plan-card h3 { margin: 0; font-size: 16px; font-weight: 650; }
+.plan-price { font-size: 28px; font-weight: 720; margin: 10px 0 20px; }
+.plan-limits { list-style: none; margin: 0 0 22px; padding: 0; display: flex; flex-direction: column; gap: 9px; color: var(--text-2); font-size: 13px; flex: 1; }
+.plan-cta { text-decoration: none; justify-content: center; }
+
+.landing-final-cta { text-align: center; }
+.landing-final-cta h2 { margin-bottom: 24px; }
+.landing-final-cta .landing-cta { text-decoration: none; }
+
+.landing-footer { text-align: center; padding: 28px; color: var(--text-3); font-size: 12.5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
