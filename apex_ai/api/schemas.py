@@ -133,6 +133,47 @@ class RecommendedModelOut(BaseModel):
     model: ModelEntryOut | None = None
 
 
+class PlanLimitsOut(BaseModel):
+    max_documents: int | None
+    max_storage_mb: int | None
+    max_collections: int | None
+    max_projects: int | None
+    max_messages_per_month: int | None
+    max_tool_calls_per_month: int | None
+
+
+class PlanOut(BaseModel):
+    id: str
+    name: str
+    price_cents: int
+    limits: PlanLimitsOut
+    features: list[str]
+
+
+class SubscriptionOut(BaseModel):
+    user_id: str
+    plan: PlanOut
+    status: str
+    created_at: str
+    updated_at: str
+
+
+class EntitlementOut(BaseModel):
+    allowed: bool
+    resource: str
+    plan_id: str
+    plan_name: str
+    limit: int | None
+    used: int
+    remaining: int | None
+    reason: str = ""
+
+
+class UsageSummaryOut(BaseModel):
+    subscription: SubscriptionOut
+    entitlements: list[EntitlementOut]
+
+
 class IngestOut(BaseModel):
     status: str
     document_id: str
@@ -219,6 +260,7 @@ __all__ = [
     "DeletedCountOut",
     "DeletedOut",
     "DocumentOut",
+    "EntitlementOut",
     "HealthOut",
     "IngestOut",
     "LlmStatusOut",
@@ -228,12 +270,16 @@ __all__ = [
     "MessageOut",
     "ModelEntryOut",
     "ModelSelectOut",
+    "PlanLimitsOut",
+    "PlanOut",
     "ProjectOut",
     "QueryOut",
     "RecommendedModelOut",
     "RejectMemoryOut",
     "RemovedOut",
     "StopOut",
+    "SubscriptionOut",
     "UploadOut",
+    "UsageSummaryOut",
     "UserOut",
 ]

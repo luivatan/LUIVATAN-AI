@@ -86,6 +86,11 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   closes the roadmap's "timeouts, retries, fallbacks, and graceful handling" phase for
   everything this architecture can honestly deliver — see
   `docs/PHASE80_RELIABILITY_LAYER.md` for the full audit and what's deliberately not done.
+- **Subscription plan architecture** (Phase 81-84) — real Free/Pro/Business tiers with
+  capacity limits (documents, storage, collections, projects) and monthly rate limits
+  (messages, tool calls), `GET /billing/plans` / `GET /billing/plan`. Architecture only —
+  no real payment provider is connected; see `docs/PHASE81-84_SUBSCRIPTION_PLANS.md` and
+  the Section 8 decision docs for what's deliberately not built and why.
 - **Bounded conversation context** — newest complete turns are selected under configurable
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.
@@ -253,6 +258,7 @@ storage-boundary safety policy in
 | `PATCH /conversations/{id}/collection` | change (or clear) which knowledge-base collection a conversation is scoped to |
 | `PATCH /conversations/{id}/project` | move a conversation into (or out of) a project (Phase 71) |
 | `GET/POST /projects`, `PATCH/DELETE /projects/{id}` | project workspace CRUD — name, instructions, and a linked collection (Phase 71/72) |
+| `GET /billing/plans`, `GET /billing/plan` | the plan catalog, and the caller's current subscription (Phase 81-84) |
 | `GET /memory/candidates` | safe pending suggestions awaiting a user decision |
 | `POST /memory/candidates/{id}/approve` or `/reject` | explicit confirmation decision |
 | `POST /documents/upload` | bounded multipart upload into existing ingestion; accepts an optional `collection_id` form field |
@@ -335,6 +341,7 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_USERS_DB_PATH` | `data/users.db` | accounts + sessions (Phase 51/52) |
 | `APEX_COLLECTIONS_DB_PATH` | `data/collections.db` | named document-collection labels (Phase 66) |
 | `APEX_PROJECTS_DB_PATH` | `data/projects.db` | project workspaces — name, instructions, a linked collection (Phase 71) |
+| `APEX_BILLING_DB_PATH` | `data/billing.db` | subscription state and the usage-tracking ledger (Phase 81/87/88) |
 | `APEX_SESSION_COOKIE_NAME` / `APEX_SESSION_TTL_DAYS` | `apex_session` / `30` | session cookie name and lifetime |
 | `APEX_AUTO_LOGIN_LOCAL` | `1` | `0` = require real sign-in for every request instead of the default-local-account fallback |
 | `APEX_MAX_UPLOAD_MB` | `50` | server-enforced size limit for each browser upload |

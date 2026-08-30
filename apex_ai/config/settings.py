@@ -80,6 +80,9 @@ class Settings:
     users_db_path: Path = field(default_factory=lambda: resolve_path("data/users.db"))
     collections_db_path: Path = field(default_factory=lambda: resolve_path("data/collections.db"))
     projects_db_path: Path = field(default_factory=lambda: resolve_path("data/projects.db"))
+    # Phase 81/87/88: subscription state and usage-ledger tables share this
+    # file, mirroring users.db holding both users and sessions.
+    billing_db_path: Path = field(default_factory=lambda: resolve_path("data/billing.db"))
 
     # --- embeddings ---------------------------------------------------
     embedding_model: str = "all-MiniLM-L6-v2"
@@ -306,6 +309,9 @@ def load_settings() -> Settings:
         ),
         projects_db_path=resolve_path(
             _env("APEX_PROJECTS_DB_PATH", default="data/projects.db")
+        ),
+        billing_db_path=resolve_path(
+            _env("APEX_BILLING_DB_PATH", default="data/billing.db")
         ),
         embedding_model=_env("APEX_EMBEDDING_MODEL", default="all-MiniLM-L6-v2"),
         embedding_batch_size=_bounded_int(

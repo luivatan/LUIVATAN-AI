@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from apex_ai import APP_NAME, __version__
 from apex_ai.api.auth import create_auth_router, make_require_user_dependency
+from apex_ai.api.billing import create_billing_router
 from apex_ai.api.chat import GenerationManager, create_chat_router
 from apex_ai.api.collections import create_collections_router
 from apex_ai.api.errors import APIError, install_error_handlers, service_not_ready_error
@@ -315,6 +316,7 @@ def create_api(
             )
 
     app.include_router(create_auth_router(services))
+    app.include_router(create_billing_router(services))
     app.include_router(create_upload_router(services))
     app.include_router(create_memory_router(services))
     app.include_router(create_collections_router(services))

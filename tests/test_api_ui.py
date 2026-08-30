@@ -13,6 +13,7 @@ def wired_services(settings, ingestion, embeddings, store):
     from apex_ai.auth.service import AuthService
     from apex_ai.auth.sessions import SessionStore
     from apex_ai.auth.users import UserStore
+    from apex_ai.billing import EntitlementService, SubscriptionStore, UsageStore
     from apex_ai.memory.conversation import ConversationMemory
     from apex_ai.models.manager import ModelManager
     from apex_ai.models.router import ModelRouter
@@ -39,12 +40,16 @@ def wired_services(settings, ingestion, embeddings, store):
         user_id=default_local_user.id,
     )
     manager = ModelManager(settings)
+    subscriptions = SubscriptionStore(settings.billing_db_path)
+    usage = UsageStore(settings.billing_db_path)
     return ApexServices(
         settings=settings, embeddings=embeddings, store=store, ingestion=ingestion,
         retriever=retriever, reranker=LexicalReranker(), memory=memory,
         query_processor=QueryProcessor(enabled=False), engine=engine,
         models=manager,
         model_router=ModelRouter(manager, max_fast_model_mb=settings.max_fast_model_mb),
+        subscriptions=subscriptions, usage=usage,
+        entitlements=EntitlementService(subscriptions, usage),
         auth=auth, default_local_user=default_local_user,
     )
 
@@ -353,6 +358,31 @@ def test_recommended_model_endpoint_picks_the_smallest_model_for_fast(api_client
 def test_recommended_model_endpoint_rejects_an_unknown_task(api_client):
     response = api_client.get("/models/recommended", params={"task": "does-not-exist"})
     assert response.status_code == 422
+
+
+def test_billing_plans_endpoint_lists_every_tier_cheapest_first(api_client):
+    response = api_client.get("/billing/plans")
+    assert response.status_code == 200
+    payload = response.json()
+    assert [plan["id"] for plan in payload] == ["free", "pro", "business"]
+    assert payload[0]["price_cents"] == 0
+
+
+def test_billing_plan_endpoint_defaults_to_free_for_a_new_account(api_client):
+    response = api_client.get("/billing/plan")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["plan"]["id"] == "free"
+    assert payload["status"] == "active"
+
+
+def test_billing_plan_endpoint_reflects_an_administratively_set_plan(
+    api_client, wired_services
+):
+    wired_services.subscriptions.set_plan(wired_services.default_local_user.id, "pro")
+    response = api_client.get("/billing/plan")
+    assert response.status_code == 200
+    assert response.json()["plan"]["id"] == "pro"
 
 
 def test_memory_confirmation_endpoint_degrades_when_optional_store_is_unavailable(

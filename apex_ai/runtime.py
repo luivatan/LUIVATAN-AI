@@ -65,6 +65,9 @@ class ApexServices:
     tools: Any = None
     tool_executor: Any = None
     model_router: Any = None
+    subscriptions: Any = None
+    usage: Any = None
+    entitlements: Any = None
     _extras: dict = field(default_factory=dict)
 
     @property
@@ -266,6 +269,12 @@ def build_services(
 
         services.tools = build_default_registry()
         services.tool_executor = PermissionedToolExecutor(services.tools)
+
+        from apex_ai.billing import EntitlementService, SubscriptionStore, UsageStore
+
+        services.subscriptions = SubscriptionStore(settings.billing_db_path)
+        services.usage = UsageStore(settings.billing_db_path)
+        services.entitlements = EntitlementService(services.subscriptions, services.usage)
 
         # Phase 55: pre-Phase-55 chunks/registry entries have no owner yet;
         # assign them to the default local account, same precedent as
