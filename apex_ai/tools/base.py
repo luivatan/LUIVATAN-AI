@@ -66,6 +66,12 @@ class Tool:
     description: str
     parameters: dict[str, Any]
     handler: Callable[[dict[str, Any]], str]
+    # Phase 74: whether calling this tool needs an explicit, per-request
+    # permission grant before it is allowed to run at all. True (the
+    # default) is the conservative choice - "prevent unrestricted actions"
+    # means a tool must opt OUT of the gate by explicitly marking itself
+    # side-effect-free, never opt in by omission.
+    requires_permission: bool = True
 
     def schema(self) -> dict[str, Any]:
         return {
