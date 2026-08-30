@@ -63,6 +63,10 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
 - **Tool permission boundaries** (Phase 74) — a tool defaults to requiring an explicit
   per-request grant before it can run at all, and even a granted tool is capped at a
   fixed number of calls per turn; a gated, ungranted tool isn't even offered to the model.
+- **Calculator / data-stats tools** (Phase 76) — exact, non-guessed arithmetic (a safe
+  AST-walking evaluator, never `eval()`) and exact list aggregates (sum/mean/median/
+  min/max/count/stdev), reachable by the model via `RagEngine.ask_with_tools()` for
+  providers with real tool-calling support (OpenAI-compatible today).
 - **Bounded conversation context** — newest complete turns are selected under configurable
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.

@@ -84,6 +84,10 @@ class AnswerResult:
     # candidate/context internals.
     context_chunk_ids: list[str] = field(default_factory=list)
     context_text: str = ""
+    # Phase 76: which real tool calls (if any) this answer used, in order -
+    # {"name", "arguments", "result", "is_error"}. Empty for every turn that
+    # didn't go through RagEngine.ask_with_tools().
+    tool_calls_used: list[dict] = field(default_factory=list)
 
     @property
     def sources_block(self) -> str:

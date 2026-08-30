@@ -731,6 +731,118 @@ class RagEngine:
         )
         yield {"type": "final", "result": result}
 
+    def ask_with_tools(
+        self,
+        question: str,
+        use_memory: bool = True,
+        *,
+        tool_executor,
+        granted_tools: frozenset[str] = frozenset(),
+        document_ids: list[str] | None = None,
+        project_instructions: str | None = None,
+    ) -> AnswerResult:
+        """Same contract as :meth:`ask`, plus one bounded round of real tool
+        calls (Phase 76) when the active provider actually supports them.
+
+        Falls back to plain :meth:`ask` whenever tools cannot be used this
+        turn — no ``supports_tools`` on the active provider, or nothing
+        registered/granted — so this is always a safe superset of
+        :meth:`ask`, never a degraded path. Non-streaming and at most one
+        round of tool calls by design: a model that keeps requesting tools
+        after that round gets no further tools offered and must answer with
+        what it has, the same bounded-turn posture
+        ``PermissionedToolExecutor``'s own call budget already applies to
+        the individual calls within that one round.
+        """
+        tool_schema = tool_executor.schema(granted_tools=granted_tools) if tool_executor else []
+        if not tool_schema or not getattr(self.llm, "supports_tools", False):
+            return self.ask(
+                question,
+                use_memory,
+                document_ids=document_ids,
+                project_instructions=project_instructions,
+            )
+
+        if not question or not question.strip():
+            return AnswerResult(answer="Please ask a question first.")
+        if self.store.count(self.user_id) == 0:
+            return AnswerResult(
+                answer="There are no indexed documents yet. Open the Documents tab and "
+                "upload a PDF, TXT, Markdown or JSON file first.",
+                insufficient_evidence=True,
+            )
+
+        started = time.perf_counter()
+        turn = self.prepare(question, use_memory, document_ids=document_ids)
+        if not turn.supported:
+            return self._insufficient(turn)
+
+        messages = build_messages(
+            question,
+            turn.context.text,
+            turn.history,
+            medical=self.medical_mode,
+            history_text=turn.conversation_context.text,
+            memory_text=turn.memory_text,
+            summary_text=turn.summary_text,
+            project_instructions=project_instructions,
+        )
+
+        try:
+            first = self.llm.generate_with_tools(
+                messages, tools=tool_schema, **self._generation_kwargs()
+            )
+        except Exception as error:
+            log.exception("Tool-augmented generation failed")
+            raise self._provider_failure(error) from error
+
+        if not first.tool_calls:
+            return self._finalize(turn, first.content or "", time.perf_counter() - started, 0.0)
+
+        messages.append(
+            {
+                "role": "assistant",
+                "content": first.content,
+                "tool_calls": [
+                    {
+                        "id": call.id,
+                        "type": "function",
+                        "function": {"name": call.name, "arguments": call.arguments_json},
+                    }
+                    for call in first.tool_calls
+                ],
+            }
+        )
+        budget = tool_executor.new_budget()
+        tool_calls_used = []
+        for call in first.tool_calls:
+            tool_result = tool_executor.execute(call, granted_tools=granted_tools, budget=budget)
+            tool_calls_used.append(
+                {
+                    "name": tool_result.name,
+                    "arguments": call.arguments_json,
+                    "result": tool_result.content,
+                    "is_error": tool_result.is_error,
+                }
+            )
+            messages.append(tool_result.to_message())
+
+        generation_started = time.perf_counter()
+        try:
+            final_answer = self.llm.generate(messages=messages, **self._generation_kwargs())
+        except Exception as error:
+            log.exception("Final tool-augmented generation failed")
+            raise self._provider_failure(error) from error
+
+        result = self._finalize(
+            turn,
+            final_answer,
+            time.perf_counter() - started,
+            time.perf_counter() - generation_started,
+        )
+        result.tool_calls_used = tool_calls_used
+        return result
+
 
 def _strip_preamble(answer: str) -> str:
     """Small models sometimes echo a label; tidy common cases."""

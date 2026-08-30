@@ -62,6 +62,8 @@ class ApexServices:
     default_local_user: User | None = None
     collections: Any = None
     projects: Any = None
+    tools: Any = None
+    tool_executor: Any = None
     _extras: dict = field(default_factory=dict)
 
     @property
@@ -254,6 +256,11 @@ def build_services(
 
         services.projects = ProjectStore(settings.projects_db_path)
 
+        from apex_ai.tools import PermissionedToolExecutor, build_default_registry
+
+        services.tools = build_default_registry()
+        services.tool_executor = PermissionedToolExecutor(services.tools)
+
         # Phase 55: pre-Phase-55 chunks/registry entries have no owner yet;
         # assign them to the default local account, same precedent as
         # long_term_memory.backfill_owner above.
@@ -355,3 +362,13 @@ class _LazyLLM:
             return self._provider().supports_streaming
         except ApexError:
             return False
+
+    @property
+    def supports_tools(self) -> bool:
+        try:
+            return self._provider().supports_tools
+        except ApexError:
+            return False
+
+    def generate_with_tools(self, messages, tools, **kwargs):
+        return self._provider().generate_with_tools(messages, tools, **kwargs)
