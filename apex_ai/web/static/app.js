@@ -17,6 +17,8 @@ const state = {
   // Documents page filter/upload target: null = all documents, "" =
   // uncategorized only, a real ID = that one collection (Phase 66).
   activeCollectionId: null,
+  // Phase 71: project workspaces (name, instructions, a linked collection).
+  projects: [],
   preferences: {
     theme: localStorage.getItem("apex.theme") || "system",
     enterToSend: localStorage.getItem("apex.enterToSend") !== "false",
@@ -348,9 +350,10 @@ function showView(name) {
   state.currentView = name;
   $$(".view").forEach(view => view.classList.toggle("active", view.id === `${name}View`));
   $$("[data-view]").forEach(button => button.classList.toggle("active", button.dataset.view === name));
-  if (name === "chat") { $("#topbarTitle").textContent = state.currentConversation?.title || "New conversation"; syncConversationCollectionSelect(); }
+  if (name === "chat") { $("#topbarTitle").textContent = state.currentConversation?.title || "New conversation"; syncConversationCollectionSelect(); syncConversationProjectSelect(); }
   else $("#topbarTitle").textContent = name[0].toUpperCase() + name.slice(1);
   if (name === "documents") loadDocuments();
+  if (name === "projects") loadProjects();
   if (name === "settings") { loadMemories(); loadAccount(); }
   closeMobileSidebar();
 }
@@ -649,7 +652,7 @@ async function sendMessage({ regenerate = false } = {}) {
   try {
     const response = await request("/chat/stream", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, conversation_id: state.currentConversation?.id || null, request_id: state.requestId, regenerate, use_memory: state.preferences.useMemory, collection_id: state.currentConversation?.id ? null : ($("#conversationCollection").value || null) }),
+      body: JSON.stringify({ question, conversation_id: state.currentConversation?.id || null, request_id: state.requestId, regenerate, use_memory: state.preferences.useMemory, collection_id: state.currentConversation?.id ? null : ($("#conversationCollection").value || null), project_id: state.currentConversation?.id ? null : ($("#conversationProject").value || null) }),
     });
     if (!response.ok) throw await errorFromResponse(response);
     const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
@@ -680,6 +683,7 @@ function handleStreamEvent(event) {
     state.currentConversation = event.conversation;
     $("#topbarTitle").textContent = event.conversation.title;
     syncConversationCollectionSelect();
+    syncConversationProjectSelect();
     mergeMemoryCandidates(event.memory_candidates || []);
     return;
   }
@@ -739,13 +743,24 @@ function renderAttachmentTray() {
   });
 }
 
+function resolveUploadCollectionId() {
+  // Documents page: whatever collection filter is active. Chat composer: the
+  // current (or about-to-be-created) conversation's knowledge base, so an
+  // attachment is immediately retrievable in that same chat. A project-scoped
+  // conversation's knowledge base is its project's linked collection (Phase
+  // 71), same precedence the backend already applies for retrieval.
+  if (state.currentView === "documents") return state.activeCollectionId;
+  const projectId = state.currentConversation?.project_id
+    || (!state.currentConversation ? $("#conversationProject").value : "");
+  if (projectId) return state.projects.find(project => project.id === projectId)?.collection_id || "";
+  return state.currentConversation?.collection_id
+    || (!state.currentConversation ? $("#conversationCollection").value : "");
+}
+
 async function uploadOne(item) {
   item.status = "uploading"; renderAttachmentTray();
   const form = new FormData(); form.append("file", item.file, item.file.name);
-  // Documents page: whatever collection filter is active. Chat composer: the
-  // current conversation's own knowledge base, so an attachment is
-  // immediately retrievable in that same chat.
-  const targetCollection = state.currentView === "documents" ? state.activeCollectionId : state.currentConversation?.collection_id;
+  const targetCollection = resolveUploadCollectionId();
   if (targetCollection) form.append("collection_id", targetCollection);
   try {
     const result = await api("/documents/upload", { method: "POST", body: form });
@@ -910,6 +925,132 @@ async function changeConversationCollection(collectionId) {
   } catch (error) { toast(errorMessage(error), "error"); syncConversationCollectionSelect(); }
 }
 
+// ---------------- projects (Phase 71/72) ----------------
+
+async function loadProjects() {
+  try { state.projects = await api("/projects"); }
+  catch (_) { state.projects = []; }
+  $("#projectCount").textContent = state.projects.length;
+  renderProjectList();
+  renderConversationProjectOptions();
+}
+
+function projectCollectionOptions(collectionId) {
+  return [
+    '<option value="">No linked collection</option>',
+    ...state.collections.map(c => `<option value="${escapeHTML(c.id)}"${collectionId === c.id ? " selected" : ""}>${escapeHTML(c.name)}</option>`),
+  ].join("");
+}
+
+function renderProjectList() {
+  const list = $("#projectList"); if (!list) return;
+  list.replaceChildren();
+  if (!state.projects.length) {
+    list.innerHTML = '<div class="project-empty"><div><strong>No projects yet</strong>Create one to group conversations under shared instructions and a knowledge base.</div></div>';
+    return;
+  }
+  state.projects.forEach(project => {
+    const card = document.createElement("div"); card.className = "project-card"; card.dataset.projectId = project.id;
+    card.innerHTML = `<div class="project-card-header"><h3></h3><div class="project-actions"><button class="rename-project" title="Rename project">${icons.edit}</button><button class="delete-project" title="Delete project">${icons.trash}</button></div></div><label class="project-field"><span>Instructions</span><textarea class="project-instructions-input" placeholder="e.g. Always cite page numbers. Answer in a formal tone."></textarea></label><label class="project-field"><span>Knowledge base</span><select class="project-collection-select" aria-label="Linked collection"></select></label><button class="quiet-button start-project-chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New chat</button>`;
+    $("h3", card).textContent = project.name;
+    const instructions = $(".project-instructions-input", card);
+    instructions.value = project.instructions || "";
+    instructions.addEventListener("change", () => saveProjectInstructions(project, instructions));
+    const collectionSelect = $(".project-collection-select", card);
+    collectionSelect.innerHTML = projectCollectionOptions(project.collection_id);
+    collectionSelect.addEventListener("change", event => changeProjectCollection(project, event.target.value));
+    $(".rename-project", card).addEventListener("click", () => renameProject(project));
+    $(".delete-project", card).addEventListener("click", () => deleteProjectAction(project));
+    $(".start-project-chat", card).addEventListener("click", () => startProjectChat(project));
+    list.append(card);
+  });
+}
+
+async function createProject() {
+  const name = prompt("New project name");
+  if (!name || !name.trim()) return;
+  try { await api("/projects", { method: "POST", body: JSON.stringify({ name: name.trim() }) }); await loadProjects(); }
+  catch (error) { toast(errorMessage(error), "error"); }
+}
+
+async function renameProject(project) {
+  const name = prompt("Rename project", project.name);
+  if (!name || !name.trim() || name.trim() === project.name) return;
+  try { await api(`/projects/${project.id}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) }); await loadProjects(); }
+  catch (error) { toast(errorMessage(error), "error"); }
+}
+
+async function saveProjectInstructions(project, textarea) {
+  try { await api(`/projects/${project.id}`, { method: "PATCH", body: JSON.stringify({ instructions: textarea.value }) }); toast("Project instructions saved.", "success"); }
+  catch (error) { toast(errorMessage(error), "error"); textarea.value = project.instructions || ""; }
+}
+
+async function changeProjectCollection(project, collectionId) {
+  try {
+    const payload = collectionId ? { collection_id: collectionId } : { clear_collection: true };
+    await api(`/projects/${project.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+    await loadProjects();
+  } catch (error) { toast(errorMessage(error), "error"); }
+}
+
+async function deleteProjectAction(project) {
+  const accepted = await confirmAction("Delete project?", `“${project.name}” will be removed. Its conversations are not deleted — they leave the project.`, "Delete project");
+  if (!accepted) return;
+  try {
+    await api(`/projects/${project.id}`, { method: "DELETE" });
+    if (state.currentConversation?.project_id === project.id) {
+      state.currentConversation = { ...state.currentConversation, project_id: "" };
+      syncConversationProjectSelect();
+    }
+    await loadProjects();
+    toast(`${project.name} deleted.`, "success");
+  } catch (error) { toast(errorMessage(error), "error"); }
+}
+
+function startProjectChat(project) {
+  if (state.generating) return toast("Stop the current response before starting a new chat.");
+  newChat();
+  $("#conversationProject").value = project.id;
+  updateScopeControlsAvailability();
+  toast(`New chat will start in "${project.name}".`);
+}
+
+function renderConversationProjectOptions() {
+  const select = $("#conversationProject"); if (!select) return;
+  select.innerHTML = '<option value="">No project</option>' + state.projects.map(p => `<option value="${escapeHTML(p.id)}">${escapeHTML(p.name)}</option>`).join("");
+  syncConversationProjectSelect();
+}
+
+function syncConversationProjectSelect() {
+  const select = $("#conversationProject"); if (!select) return;
+  select.value = state.currentConversation?.project_id || "";
+  updateScopeControlsAvailability();
+}
+
+function updateScopeControlsAvailability() {
+  // A project's own linked collection (Phase 71) takes over retrieval scoping
+  // once one is selected; the standalone collection picker (Phase 67) stops
+  // applying, so disable it rather than leave a control that silently does
+  // nothing.
+  const hasProject = Boolean($("#conversationProject")?.value);
+  const collectionSelect = $("#conversationCollection");
+  if (collectionSelect) collectionSelect.disabled = hasProject;
+  const collectionField = $("#conversationCollectionField");
+  if (collectionField) collectionField.title = hasProject
+    ? "This conversation's knowledge base comes from its project instead."
+    : "Scope this conversation's retrieval to one knowledge-base collection";
+}
+
+async function changeConversationProject(projectId) {
+  updateScopeControlsAvailability();
+  if (!state.currentConversation) return;  // not-yet-created chat: sendMessage() reads the select directly
+  try {
+    const updated = await api(`/conversations/${state.currentConversation.id}/project`, { method: "PATCH", body: JSON.stringify({ project_id: projectId || null }) });
+    state.currentConversation = { ...state.currentConversation, ...updated };
+    syncConversationCollectionSelect();
+  } catch (error) { toast(errorMessage(error), "error"); syncConversationProjectSelect(); }
+}
+
 function confirmAction(title, text, actionLabel) {
   return new Promise(resolve => {
     const modal = $("#confirmModal"); $("#confirmTitle").textContent = title; $("#confirmText").textContent = text; $("#confirmAccept").textContent = actionLabel;
@@ -981,6 +1122,8 @@ function bindEvents() {
   $$('[data-theme-choice]').forEach(button => button.addEventListener("click", () => setTheme(button.dataset.themeChoice)));
   $("#modelSelect").addEventListener("change", selectModel);
   $("#conversationCollection").addEventListener("change", event => changeConversationCollection(event.target.value));
+  $("#conversationProject").addEventListener("change", event => changeConversationProject(event.target.value));
+  $("#newProjectButton").addEventListener("click", createProject);
   $("#messageInput").addEventListener("input", () => { autoResizeComposer(); updateSendState(); });
   $("#messageInput").addEventListener("keydown", event => { if (event.key === "Enter" && !event.shiftKey && state.preferences.enterToSend) { event.preventDefault(); sendMessage(); } });
   $("#sendButton").addEventListener("click", () => sendMessage());
@@ -1014,6 +1157,7 @@ function bindEvents() {
 async function initialize() {
   setTheme(state.preferences.theme); bindEvents(); renderMessages(); updateSendState();
   await loadCollections();  // documents render collection dropdowns from state.collections
+  await loadProjects();  // topbar picker and the Projects page need the list up front
   await Promise.all([
     loadConfig(),
     loadConversations(),

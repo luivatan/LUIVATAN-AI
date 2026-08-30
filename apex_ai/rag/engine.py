@@ -622,13 +622,16 @@ class RagEngine:
         *,
         history_override: list[dict] | None = None,
         document_ids: list[str] | None = None,
+        project_instructions: str | None = None,
     ) -> AnswerResult:
         """Full non-streaming turn.
 
         ``history_override`` exists for deterministic evaluation fixtures;
         normal UI/API callers use the configured conversation memory.
         ``document_ids`` (Phase 67) scopes retrieval to one knowledge-base
-        collection when the conversation has one selected.
+        collection when the conversation has one selected. ``project_instructions``
+        (Phase 72) is the configured instructions of the project this
+        conversation belongs to, if any.
         """
         if not question or not question.strip():
             return AnswerResult(answer="Please ask a question first.")
@@ -655,6 +658,7 @@ class RagEngine:
             history_text=turn.conversation_context.text,
             memory_text=turn.memory_text,
             summary_text=turn.summary_text,
+            project_instructions=project_instructions,
         )
         generation_started = time.perf_counter()
         try:
@@ -675,6 +679,7 @@ class RagEngine:
         use_memory: bool = True,
         *,
         document_ids: list[str] | None = None,
+        project_instructions: str | None = None,
     ) -> Iterator[dict]:
         """Yield real provider tokens, then one final AnswerResult event."""
         if not question or not question.strip():
@@ -706,6 +711,7 @@ class RagEngine:
             history_text=turn.conversation_context.text,
             memory_text=turn.memory_text,
             summary_text=turn.summary_text,
+            project_instructions=project_instructions,
         )
         generation_started = time.perf_counter()
         parts: list[str] = []

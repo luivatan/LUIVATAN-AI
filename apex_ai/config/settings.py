@@ -79,6 +79,7 @@ class Settings:
     )
     users_db_path: Path = field(default_factory=lambda: resolve_path("data/users.db"))
     collections_db_path: Path = field(default_factory=lambda: resolve_path("data/collections.db"))
+    projects_db_path: Path = field(default_factory=lambda: resolve_path("data/projects.db"))
 
     # --- embeddings ---------------------------------------------------
     embedding_model: str = "all-MiniLM-L6-v2"
@@ -272,6 +273,9 @@ def load_settings() -> Settings:
         users_db_path=resolve_path(_env("APEX_USERS_DB_PATH", default="data/users.db")),
         collections_db_path=resolve_path(
             _env("APEX_COLLECTIONS_DB_PATH", default="data/collections.db")
+        ),
+        projects_db_path=resolve_path(
+            _env("APEX_PROJECTS_DB_PATH", default="data/projects.db")
         ),
         embedding_model=_env("APEX_EMBEDDING_MODEL", default="all-MiniLM-L6-v2"),
         embedding_batch_size=_bounded_int(

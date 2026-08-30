@@ -22,6 +22,7 @@ def web_services(settings, ingestion, embeddings, store):
     from apex_ai.memory.extraction import MemoryCandidateExtractor
     from apex_ai.memory.long_term import LongTermMemoryStore
     from apex_ai.models.manager import ModelManager
+    from apex_ai.projects.store import ProjectStore
     from apex_ai.rag.engine import RagEngine
     from apex_ai.rag.query_processing import QueryProcessor
     from apex_ai.retrieval.keyword import BM25Index
@@ -80,6 +81,7 @@ def web_services(settings, ingestion, embeddings, store):
         auth=auth,
         default_local_user=default_local_user,
         collections=CollectionStore(settings.collections_db_path),
+        projects=ProjectStore(settings.projects_db_path),
     )
 
 
@@ -157,6 +159,8 @@ def test_web_shell_is_chat_first_and_has_security_headers(web_client):
     assert "memoryConfirmationRegion" in response.text
     assert "conversationCollection" in response.text
     assert "collectionFilterRow" in response.text
+    assert "conversationProject" in response.text
+    assert "projectList" in response.text
     assert "dashboard" not in response.text.lower()
     assert "default-src 'self'" in response.headers["content-security-policy"]
 
@@ -215,6 +219,13 @@ def test_static_assets_include_responsive_themes_and_code_blocks(web_client):
     assert "/collections" in javascript.text
     # Phase 68: non-destructive same-name new-version detection.
     assert "previous_version_id" in javascript.text
+    # Phase 71/72: project workspaces (conversations + instructions + a linked collection).
+    assert ".project-card" in css.text
+    assert ".project-instructions-input" in css.text
+    assert "function loadProjects" in javascript.text
+    assert "function renderProjectList" in javascript.text
+    assert "conversationProject" in javascript.text
+    assert "/projects" in javascript.text
     assert "function offerToRemovePreviousVersion" in javascript.text
 
 
@@ -936,6 +947,216 @@ def test_chat_stream_rejects_a_nonexistent_collection_on_lazy_create(web_client)
         },
     )
     assert response.status_code == 404
+
+
+def test_project_crud_via_the_api(web_client):
+    created = web_client.post(
+        "/projects", json={"name": "Research", "instructions": "Be concise."}
+    )
+    assert created.status_code == 201
+    project = created.json()
+    assert project["name"] == "Research"
+    assert project["instructions"] == "Be concise."
+    assert project["collection_id"] is None
+
+    fetched = web_client.get(f"/projects/{project['id']}")
+    assert fetched.status_code == 200
+    assert fetched.json() == project
+
+    listed = web_client.get("/projects").json()
+    assert [p["id"] for p in listed] == [project["id"]]
+
+    updated = web_client.patch(
+        f"/projects/{project['id']}", json={"name": "Renamed", "instructions": "Be terse."}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Renamed"
+    assert updated.json()["instructions"] == "Be terse."
+
+    assert web_client.delete(f"/projects/{project['id']}").json() == {"deleted": True}
+    assert web_client.get("/projects").json() == []
+    assert web_client.delete(f"/projects/{project['id']}").status_code == 404
+    assert web_client.get(f"/projects/{project['id']}").status_code == 404
+
+
+def test_creating_a_project_with_a_nonexistent_collection_is_rejected(web_client):
+    response = web_client.post(
+        "/projects", json={"name": "Bad", "collection_id": "does-not-exist"}
+    )
+    assert response.status_code == 404
+
+
+def test_project_collection_can_be_cleared_explicitly(web_client):
+    collection = web_client.post("/collections", json={"name": "For a project"}).json()
+    project = web_client.post(
+        "/projects", json={"name": "Scoped", "collection_id": collection["id"]}
+    ).json()
+    assert project["collection_id"] == collection["id"]
+
+    cleared = web_client.patch(
+        f"/projects/{project['id']}", json={"clear_collection": True}
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["collection_id"] is None
+
+
+def test_conversation_in_a_project_scopes_retrieval_to_its_collection(web_client):
+    """Phase 71 end-to-end: a conversation inside a project must answer only
+    from that project's linked collection, same guarantee Phase 67 already
+    proves for a standalone collection-scoped conversation."""
+    collection = web_client.post("/collections", json={"name": "Burns only"}).json()
+    content = (DATA_DIR / "burn_care.md").read_bytes()
+    web_client.post(
+        "/documents/upload",
+        files={"file": ("burn_care.md", content, "text/markdown")},
+        data={"collection_id": collection["id"]},
+    )
+    project = web_client.post(
+        "/projects", json={"name": "Burns project", "collection_id": collection["id"]}
+    ).json()
+
+    conversation = web_client.post("/conversations", json={"project_id": project["id"]}).json()
+    assert conversation["project_id"] == project["id"]
+
+    burns_answer = events(
+        web_client.post(
+            "/chat/stream",
+            json={
+                "question": "How should burns be cooled?",
+                "conversation_id": conversation["id"],
+                "request_id": "project-scoped-supported",
+            },
+        )
+    )
+    final = next(item for item in burns_answer if item["type"] == "final")
+    assert not final["insufficient_evidence"]
+    assert final["citations"]
+
+    fever_answer = events(
+        web_client.post(
+            "/chat/stream",
+            json={
+                "question": "What temperature is a fever in adults?",
+                "conversation_id": conversation["id"],
+                "request_id": "project-scoped-unsupported",
+            },
+        )
+    )
+    fever_final = next(item for item in fever_answer if item["type"] == "final")
+    assert fever_final["citations"] == []  # sample_first_aid.pdf is outside this project
+
+
+def test_project_instructions_are_threaded_into_the_prompt(web_client):
+    """Phase 72: a project's configured instructions must reach the LLM
+    prompt for any conversation inside that project."""
+    project = web_client.post(
+        "/projects",
+        json={"name": "Style", "instructions": "Always answer in ALL CAPS."},
+    ).json()
+    conversation = web_client.post("/conversations", json={"project_id": project["id"]}).json()
+
+    events(
+        web_client.post(
+            "/chat/stream",
+            json={
+                "question": "What temperature is a fever in adults?",
+                "conversation_id": conversation["id"],
+                "request_id": "project-instructions",
+            },
+        )
+    )
+    user_message = next(
+        message["content"] for message in FakeLLM.last_messages if message["role"] == "user"
+    )
+    assert "Always answer in ALL CAPS." in user_message
+    assert "Project instructions" in user_message
+
+
+def test_deleting_a_project_unassigns_its_conversations_not_deletes_them(web_client):
+    project = web_client.post("/projects", json={"name": "Temp"}).json()
+    conversation = web_client.post("/conversations", json={"project_id": project["id"]}).json()
+
+    assert web_client.delete(f"/projects/{project['id']}").json() == {"deleted": True}
+
+    remaining = web_client.get(f"/conversations/{conversation['id']}").json()
+    assert remaining["project_id"] is None  # conversation survives, just leaves the project
+
+
+def test_conversation_project_can_be_changed_after_creation(web_client):
+    project = web_client.post("/projects", json={"name": "Later"}).json()
+    conversation = web_client.post("/conversations", json={}).json()
+    assert conversation["project_id"] is None
+
+    updated = web_client.patch(
+        f"/conversations/{conversation['id']}/project",
+        json={"project_id": project["id"]},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["project_id"] == project["id"]
+
+    unassigned = web_client.patch(
+        f"/conversations/{conversation['id']}/project", json={"project_id": None}
+    )
+    assert unassigned.json()["project_id"] is None
+
+
+def test_setting_a_conversation_to_a_nonexistent_project_is_rejected(web_client):
+    conversation = web_client.post("/conversations", json={}).json()
+    response = web_client.patch(
+        f"/conversations/{conversation['id']}/project", json={"project_id": "does-not-exist"}
+    )
+    assert response.status_code == 404
+
+
+def test_chat_stream_lazily_creates_a_project_scoped_conversation(web_client):
+    collection = web_client.post("/collections", json={"name": "Lazy project scope"}).json()
+    content = (DATA_DIR / "burn_care.md").read_bytes()
+    web_client.post(
+        "/documents/upload",
+        files={"file": ("burn_care.md", content, "text/markdown")},
+        data={"collection_id": collection["id"]},
+    )
+    project = web_client.post(
+        "/projects", json={"name": "Lazy", "collection_id": collection["id"]}
+    ).json()
+
+    stream = events(
+        web_client.post(
+            "/chat/stream",
+            json={
+                "question": "How should burns be cooled?",
+                "project_id": project["id"],
+                "request_id": "lazy-create-project-scoped",
+            },
+        )
+    )
+    assert stream[0]["conversation"]["project_id"] == project["id"]
+    final = next(item for item in stream if item["type"] == "final")
+    assert final["citations"]
+
+
+def test_chat_stream_rejects_a_nonexistent_project_on_lazy_create(web_client):
+    response = web_client.post(
+        "/chat/stream",
+        json={
+            "question": "Anything",
+            "project_id": "does-not-exist",
+            "request_id": "lazy-create-bad-project",
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_listing_conversations_can_be_filtered_by_project(web_client):
+    project = web_client.post("/projects", json={"name": "Filter"}).json()
+    in_project = web_client.post("/conversations", json={"project_id": project["id"]}).json()
+    web_client.post("/conversations", json={})  # not in the project
+
+    filtered = web_client.get("/conversations", params={"project_id": project["id"]}).json()
+    assert [c["id"] for c in filtered] == [in_project["id"]]
+
+    unassigned_only = web_client.get("/conversations", params={"project_id": ""}).json()
+    assert in_project["id"] not in {c["id"] for c in unassigned_only}
 
 
 def test_generation_manager_supports_stop_and_one_request_per_conversation():

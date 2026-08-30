@@ -45,6 +45,11 @@
       <nav class="conversation-list" id="conversationList" aria-live="polite"></nav>
 
       <div class="sidebar-footer">
+        <button class="sidebar-link" data-view="projects">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span>Projects</span>
+          <span class="nav-badge" id="projectCount">0</span>
+        </button>
         <button class="sidebar-link" data-view="documents">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H10l2 2h5.5A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z"/></svg>
           <span>Documents</span>
@@ -68,7 +73,11 @@
         </button>
         <div class="topbar-title" id="topbarTitle">New conversation</div>
         <div class="topbar-controls">
-          <label class="model-picker collection-picker" title="Scope this conversation's retrieval to one knowledge-base collection">
+          <label class="model-picker project-picker" id="conversationProjectField" title="Assign this conversation to a project - its instructions and linked knowledge base take over">
+            <select id="conversationProject" aria-label="Project"><option value="">No project</option></select>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
+          </label>
+          <label class="model-picker collection-picker" id="conversationCollectionField" title="Scope this conversation's retrieval to one knowledge-base collection">
             <select id="conversationCollection" aria-label="Knowledge base"><option value="">All documents</option></select>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
           </label>
@@ -120,6 +129,13 @@
           </div>
         </div>
         <div class="drop-overlay" id="dropOverlay"><div><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M5 15v4h14v-4"/></svg><strong>Drop documents to add knowledge</strong><span>PDF, TXT, Markdown, or JSON</span></div></div>
+      </section>
+
+      <section class="view page-view" id="projectsView" aria-label="Projects">
+        <div class="page-container">
+          <div class="page-heading"><div><span class="eyebrow">WORKSPACES</span><h1>Projects</h1><p>Group conversations under shared instructions and a dedicated knowledge base.</p></div><button class="primary-button" id="newProjectButton"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New project</button></div>
+          <div class="project-list" id="projectList"></div>
+        </div>
       </section>
 
       <section class="view page-view" id="documentsView" aria-label="Documents">

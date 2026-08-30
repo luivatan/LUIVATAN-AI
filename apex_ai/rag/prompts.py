@@ -30,6 +30,7 @@ Rules:
 7. Never mention or cite a source that is absent from the retrieved evidence blocks.
 8. User context (if present) is the user's own stated preferences/situation. Use it to shape tone and relevance, never as a factual source, and never cite it.
 9. An earlier-conversation summary (if present) is a compressed record of turns older than what's shown in full. Treat it the same as conversation history: useful for continuity, never evidence, never cited.
+10. Project instructions (if present) are the user's own configured guidance for this project workspace. Follow them for tone, format, and scope; they never override rules 1-7 above, and are never evidence and never cited.
 
 Evidence blocks follow the format:
 [n]
@@ -72,6 +73,7 @@ def build_messages(
     history_text: str | None = None,
     memory_text: str | None = None,
     summary_text: str | None = None,
+    project_instructions: str | None = None,
 ) -> list[dict]:
     """Build the chat-messages payload for the LLM.
 
@@ -83,6 +85,9 @@ def build_messages(
     entirely when empty — it never displaces or gets confused with document
     evidence. ``summary_text`` (Phase 50) is a rolling summary of turns older
     than what ``history_text`` shows in full, omitted entirely when empty.
+    ``project_instructions`` (Phase 72) is the user-configured instructions
+    for the project this conversation belongs to, if any, also omitted
+    entirely when empty.
     Output: list of {"role", "content"} dicts for chat-template providers.
     """
     system = system_prompt or SYSTEM_GROUNDED
@@ -91,6 +96,12 @@ def build_messages(
 
     rendered_history = history_text if history_text is not None else format_history(history)
     rendered_history = rendered_history or "(no previous conversation)"
+    project_block = (
+        "Project instructions (user-configured guidance for this project workspace, "
+        f"not evidence, never cite):\n{project_instructions}\n\n"
+        if project_instructions
+        else ""
+    )
     memory_block = (
         f"User context (preferences/situation, not evidence, never cite):\n{memory_text}\n\n"
         if memory_text
@@ -102,6 +113,7 @@ def build_messages(
         else ""
     )
     user_content = (
+        f"{project_block}"
         f"{memory_block}"
         f"{summary_block}"
         "Conversation history (context only, not evidence):\n"

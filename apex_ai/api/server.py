@@ -20,6 +20,7 @@ from apex_ai.api.chat import GenerationManager, create_chat_router
 from apex_ai.api.collections import create_collections_router
 from apex_ai.api.errors import install_error_handlers, service_not_ready_error
 from apex_ai.api.memory import create_memory_router
+from apex_ai.api.projects import create_projects_router
 from apex_ai.api.rate_limit import install_rate_limiting
 from apex_ai.api.schemas import (
     AppConfigOut,
@@ -301,6 +302,7 @@ def create_api(
     app.include_router(create_upload_router(services))
     app.include_router(create_memory_router(services))
     app.include_router(create_collections_router(services))
+    app.include_router(create_projects_router(services, conversations))
     app.include_router(create_chat_router(services, conversations, app.state.generations))
 
     @app.delete("/conversations", response_model=DeletedCountOut)

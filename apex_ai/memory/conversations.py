@@ -52,6 +52,12 @@ class Conversation:
     # whole account's library, the pre-Phase-67 default). A real collection ID
     # scopes this conversation's retrieval to that collection only.
     collection_id: str = ""
+    # Phase 71: "" means this conversation is not in a project (the default,
+    # and every conversation before this phase). A real project ID means the
+    # project's own collection_id and instructions govern retrieval scoping
+    # and prompt instructions instead of this conversation's own collection_id
+    # (see stream_chat's document_ids resolution in api/chat.py).
+    project_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +68,7 @@ class Conversation:
             "message_count": self.message_count,
             "preview": self.preview,
             "collection_id": self.collection_id or None,
+            "project_id": self.project_id or None,
         }
 
 
@@ -179,6 +186,17 @@ class ConversationStore:
                 connection.execute(
                     "ALTER TABLE conversations ADD COLUMN collection_id TEXT NOT NULL DEFAULT ''"
                 )
+            # Phase 71: which project (if any) this conversation belongs to.
+            # "" = no project, same as every conversation before this phase -
+            # no backfill needed, the default is the old (unscoped) behavior.
+            if "project_id" not in conversation_columns:
+                connection.execute(
+                    "ALTER TABLE conversations ADD COLUMN project_id TEXT NOT NULL DEFAULT ''"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_conversations_project "
+                    "ON conversations(user_id, project_id)"
+                )
 
     def backfill_owner(self, user_id: str) -> int:
         """Phase 55: assign every not-yet-owned conversation (from before this
@@ -194,18 +212,26 @@ class ConversationStore:
             return cursor.rowcount
 
     def create(
-        self, user_id: str, title: str = "New conversation", collection_id: str = ""
+        self,
+        user_id: str,
+        title: str = "New conversation",
+        collection_id: str = "",
+        project_id: str = "",
     ) -> Conversation:
         conversation_id = str(uuid.uuid4())
         now = _now()
         clean_title = title.strip()[:100] or "New conversation"
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO conversations(id,user_id,title,created_at,updated_at,collection_id) "
-                "VALUES (?,?,?,?,?,?)",
-                (conversation_id, user_id, clean_title, now, now, collection_id),
+                "INSERT INTO conversations"
+                "(id,user_id,title,created_at,updated_at,collection_id,project_id) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (conversation_id, user_id, clean_title, now, now, collection_id, project_id),
             )
-        return Conversation(conversation_id, clean_title, now, now, collection_id=collection_id)
+        return Conversation(
+            conversation_id, clean_title, now, now,
+            collection_id=collection_id, project_id=project_id,
+        )
 
     def get(self, user_id: str, conversation_id: str) -> Conversation | None:
         with self._connect() as connection:
@@ -224,11 +250,24 @@ class ConversationStore:
         ).fetchone()
         return row is not None
 
-    def list(self, user_id: str, search: str = "", limit: int = 100) -> list[Conversation]:
+    def list(
+        self,
+        user_id: str,
+        search: str = "",
+        limit: int = 100,
+        project_id: str | None = None,
+    ) -> list[Conversation]:
+        """``project_id=None`` (default) does not filter by project at all;
+        ``""`` returns only conversations with no project, and a real ID
+        returns only that project's conversations (Phase 71 — mirrors
+        ``IngestionService.list_documents``'s ``collection_id`` semantics)."""
         limit = max(1, min(int(limit), 200))
         term = search.strip()
         params: list[Any] = [user_id]
         where = "WHERE c.user_id=?"
+        if project_id is not None:
+            where += " AND c.project_id=?"
+            params.append(project_id)
         if term:
             escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             like = f"%{escaped}%"
@@ -283,6 +322,36 @@ class ConversationStore:
         result = self.get(user_id, conversation_id)
         assert result is not None
         return result
+
+    def set_project(self, user_id: str, conversation_id: str, project_id: str) -> Conversation:
+        """Move this conversation into (or out of, with ``project_id=""``) a
+        project (Phase 71)."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE conversations SET project_id=?,updated_at=? WHERE id=? AND user_id=?",
+                (project_id, _now(), conversation_id, user_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(conversation_id)
+        result = self.get(user_id, conversation_id)
+        assert result is not None
+        return result
+
+    def unassign_project(self, user_id: str, project_id: str) -> int:
+        """Clear every conversation's reference to a project that's being
+        deleted (Phase 71) - conversations themselves are untouched, they
+        just leave the project (same precedent as
+        ``IngestionService.unassign_collection``). Deliberately leaves
+        ``updated_at`` alone: this is bookkeeping triggered by deleting the
+        project, not something the user did to each conversation, and must
+        not reorder the conversation list as a side effect (same reasoning
+        as ``update_summary`` above)."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE conversations SET project_id='' WHERE user_id=? AND project_id=?",
+                (user_id, project_id),
+            )
+            return cursor.rowcount
 
     def delete(self, user_id: str, conversation_id: str) -> bool:
         with self._connect() as connection:
@@ -471,6 +540,7 @@ class ConversationStore:
             message_count=int(row["message_count"]) if "message_count" in keys else 0,
             preview=row["preview"] if "preview" in keys else "",
             collection_id=row["collection_id"] if "collection_id" in keys else "",
+            project_id=row["project_id"] if "project_id" in keys else "",
         )
 
     @staticmethod

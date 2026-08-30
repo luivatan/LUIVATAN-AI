@@ -42,6 +42,7 @@ log = get_logger("api.chat")
 class ConversationCreate(BaseModel):
     title: str = Field(default="New conversation", max_length=100)
     collection_id: str | None = None
+    project_id: str | None = None
 
 
 class ConversationRename(BaseModel):
@@ -52,6 +53,10 @@ class ConversationCollectionUpdate(BaseModel):
     collection_id: str | None = None
 
 
+class ConversationProjectUpdate(BaseModel):
+    project_id: str | None = None
+
+
 class ChatStreamRequest(BaseModel):
     question: str = Field(default="", max_length=20000)
     conversation_id: str | None = None
@@ -60,8 +65,10 @@ class ChatStreamRequest(BaseModel):
     use_memory: bool = True
     # Only used when this request lazily creates a brand-new conversation
     # (no conversation_id given); an existing conversation's own stored
-    # collection_id is always authoritative (see PATCH .../collection).
+    # collection_id/project_id is always authoritative (see PATCH
+    # .../collection and PATCH .../project).
     collection_id: str | None = None
+    project_id: str | None = None
 
 
 class StopRequest(BaseModel):
@@ -189,6 +196,31 @@ def _candidate_payload(candidate, confirmation_service, user_id: str) -> dict:
     }
 
 
+def _resolve_scoping(
+    services, user_id: str, conversation
+) -> tuple[list[str] | None, str | None]:
+    """Phase 71/72: a conversation in a project scopes retrieval to that
+    project's collection and threads its instructions into the prompt,
+    taking precedence over the conversation's own standalone collection_id
+    (Phase 67) - a conversation not in a project keeps that pre-Phase-71
+    behavior unchanged."""
+    collection_id = ""
+    project_instructions = None
+    if conversation.project_id and services.projects is not None:
+        project = services.projects.get(user_id, conversation.project_id)
+        if project is not None:
+            collection_id = project.collection_id
+            project_instructions = project.instructions or None
+    elif conversation.collection_id:
+        collection_id = conversation.collection_id
+    document_ids = (
+        services.ingestion.document_ids_for_collection(user_id, collection_id)
+        if collection_id and services.ingestion is not None
+        else None
+    )
+    return document_ids, project_instructions
+
+
 def _engine_for_conversation(services, memory, user_id: str) -> RagEngine:
     """Reuse every existing backend component, changing only the memory view."""
     base = services.engine
@@ -216,8 +248,13 @@ def create_chat_router(
     require_user = make_require_user_dependency(services)
 
     @router.get("/conversations", response_model=list[ConversationOut])
-    def list_conversations(search: str = "", user=Depends(require_user)):
-        return [item.to_dict() for item in conversations.list(user.id, search=search)]
+    def list_conversations(
+        search: str = "", project_id: str | None = None, user=Depends(require_user)
+    ):
+        return [
+            item.to_dict()
+            for item in conversations.list(user.id, search=search, project_id=project_id)
+        ]
 
     @router.post("/conversations", status_code=201, response_model=ConversationOut)
     def create_conversation(payload: ConversationCreate, user=Depends(require_user)):
@@ -226,7 +263,12 @@ def create_chat_router(
             services.collections is None or services.collections.get(user.id, collection_id) is None
         ):
             raise HTTPException(status_code=404, detail="Collection not found.")
-        return conversations.create(user.id, payload.title, collection_id).to_dict()
+        project_id = payload.project_id or ""
+        if project_id and (
+            services.projects is None or services.projects.get(user.id, project_id) is None
+        ):
+            raise HTTPException(status_code=404, detail="Project not found.")
+        return conversations.create(user.id, payload.title, collection_id, project_id).to_dict()
 
     @router.patch("/conversations/{conversation_id}/collection", response_model=ConversationOut)
     def set_conversation_collection(
@@ -241,6 +283,21 @@ def create_chat_router(
             raise HTTPException(status_code=404, detail="Collection not found.")
         try:
             return conversations.set_collection(user.id, conversation_id, collection_id).to_dict()
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Conversation not found.") from error
+
+    @router.patch("/conversations/{conversation_id}/project", response_model=ConversationOut)
+    def set_conversation_project(
+        conversation_id: str, payload: ConversationProjectUpdate, user=Depends(require_user)
+    ):
+        """Move this conversation into (or out of) a project (Phase 71)."""
+        project_id = payload.project_id or ""
+        if project_id and (
+            services.projects is None or services.projects.get(user.id, project_id) is None
+        ):
+            raise HTTPException(status_code=404, detail="Project not found.")
+        try:
+            return conversations.set_project(user.id, conversation_id, project_id).to_dict()
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Conversation not found.") from error
 
@@ -318,15 +375,20 @@ def create_chat_router(
                 or services.collections.get(user.id, new_collection_id) is None
             ):
                 raise HTTPException(status_code=404, detail="Collection not found.")
-            conversation = conversations.create(user.id, collection_id=new_collection_id)
+            new_project_id = payload.project_id or ""
+            if new_project_id and (
+                services.projects is None or services.projects.get(user.id, new_project_id) is None
+            ):
+                raise HTTPException(status_code=404, detail="Project not found.")
+            conversation = conversations.create(
+                user.id, collection_id=new_collection_id, project_id=new_project_id
+            )
 
-        # Phase 67: a conversation scoped to a knowledge-base collection
-        # restricts retrieval to that collection's documents only.
-        document_ids = (
-            services.ingestion.document_ids_for_collection(user.id, conversation.collection_id)
-            if conversation.collection_id and services.ingestion is not None
-            else None
-        )
+        # Phase 67/71: a conversation scoped to a knowledge-base collection
+        # (directly, or via a project) restricts retrieval to that
+        # collection's documents only; a project's instructions (Phase 72)
+        # get woven into the prompt.
+        document_ids, project_instructions = _resolve_scoping(services, user.id, conversation)
 
         pending_user = None
         if payload.regenerate:
@@ -393,7 +455,10 @@ def create_chat_router(
                 )
                 engine = _engine_for_conversation(services, memory, user.id)
                 iterator = engine.ask_stream(
-                    question, use_memory=payload.use_memory, document_ids=document_ids
+                    question,
+                    use_memory=payload.use_memory,
+                    document_ids=document_ids,
+                    project_instructions=project_instructions,
                 )
                 for engine_event in iterator:
                     if stop_event.is_set():

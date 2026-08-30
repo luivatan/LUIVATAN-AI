@@ -33,6 +33,7 @@ class ConversationOut(BaseModel):
     message_count: int
     preview: str
     collection_id: str | None = None
+    project_id: str | None = None
 
 
 class ConversationDetailOut(ConversationOut):
@@ -98,6 +99,15 @@ class DocumentOut(BaseModel):
 class CollectionOut(BaseModel):
     id: str
     name: str
+    created_at: str
+    updated_at: str
+
+
+class ProjectOut(BaseModel):
+    id: str
+    name: str
+    instructions: str
+    collection_id: str | None = None
     created_at: str
     updated_at: str
 
@@ -212,6 +222,7 @@ __all__ = [
     "MessageOut",
     "ModelEntryOut",
     "ModelSelectOut",
+    "ProjectOut",
     "QueryOut",
     "RejectMemoryOut",
     "RemovedOut",

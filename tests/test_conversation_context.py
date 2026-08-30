@@ -128,6 +128,28 @@ def test_prompt_uses_the_exact_prepared_history_instead_of_reformatting_raw_turn
     assert "context only, not evidence" in prompt
 
 
+def test_project_instructions_appear_in_the_prompt_and_are_marked_never_evidence():
+    """Phase 72: project instructions must reach the prompt, be clearly
+    separated from evidence, and be omitted entirely when there are none."""
+    with_instructions = build_messages(
+        "current question",
+        "[1]\nSOURCE: guide.pdf\nevidence",
+        history_text="(no previous conversation)",
+        project_instructions="Always answer in ALL CAPS.",
+    )
+    prompt = with_instructions[-1]["content"]
+    assert "Always answer in ALL CAPS." in prompt
+    assert "not evidence, never cite" in prompt
+
+    without_instructions = build_messages(
+        "current question",
+        "[1]\nSOURCE: guide.pdf\nevidence",
+        history_text="(no previous conversation)",
+        project_instructions=None,
+    )
+    assert "Project instructions" not in without_instructions[-1]["content"]
+
+
 def test_use_memory_false_excludes_all_conversation_context(engine):
     engine.memory.add("prior question", "prior answer")
     turn = engine.prepare(

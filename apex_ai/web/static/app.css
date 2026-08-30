@@ -117,7 +117,8 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .model-picker:hover { border-color: var(--border-strong); background: var(--surface-2); }
 .model-picker select { width: 100%; height: 100%; appearance: none; border: 0; outline: 0; color: var(--text); background: transparent; padding: 0 31px 0 31px; font-size: 12px; font-weight: 600; text-overflow: ellipsis; }
 .model-picker svg { position: absolute; right: 9px; pointer-events: none; width: 15px; color: var(--text-3); }
-.collection-picker select { padding-left: 13px; }
+.collection-picker select, .project-picker select { padding-left: 13px; }
+.collection-picker:has(select:disabled) { opacity: .5; }
 .model-pulse { position: absolute; left: 12px; width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(70,211,154,.1); pointer-events: none; }
 .topbar > .icon-button:last-child { justify-self: end; }
 html[data-theme="dark"] .sun-icon { display: block; }
@@ -274,6 +275,21 @@ kbd { border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; bac
 .collection-chip-action:hover { color: var(--text); background: var(--surface-2); }
 .collection-chip-action svg { width: 13px; }
 #uploadCollectionNote { color: var(--accent); }
+.project-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.project-card { border: 1px solid var(--border); background: var(--surface); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.project-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.project-card-header h3 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.project-actions { display: flex; gap: 4px; flex: 0 0 auto; }
+.project-actions button { width: 29px; height: 29px; display: grid; place-items: center; border: 0; border-radius: 7px; color: var(--text-3); background: transparent; }
+.project-actions button:hover { color: var(--text); background: var(--surface-3); }
+.project-actions .delete-project:hover { color: var(--danger); }
+.project-actions svg { width: 14px; }
+.project-field { display: flex; flex-direction: column; gap: 5px; font-size: 10.5px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
+.project-instructions-input { min-height: 72px; resize: vertical; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 9px; padding: 9px 10px; font: 12px/1.5 inherit; text-transform: none; letter-spacing: normal; font-weight: 400; }
+.project-instructions-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.project-collection-select { height: 33px; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 8px; padding: 0 8px; font-size: 11.5px; text-transform: none; letter-spacing: normal; font-weight: 500; }
+.start-project-chat { height: 33px; align-self: flex-start; margin-top: 2px; }
+.project-empty { grid-column: 1 / -1; min-height: 160px; display: grid; place-items: center; text-align: center; color: var(--text-3); font-size: 12px; line-height: 1.6; }.project-empty strong { display: block; color: var(--text-2); font-size: 13px; }
 .library-empty { min-height: 180px; display: grid; place-items: center; text-align: center; color: var(--text-3); font-size: 12px; line-height: 1.6; }.library-empty strong { display: block; color: var(--text-2); font-size: 13px; }
 .memory-list { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
 .memory-row { display: grid; grid-template-columns: 82px minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 11px 14px; border-bottom: 1px solid var(--border); }.memory-row:last-child { border-bottom: 0; }.memory-row:hover { background: var(--surface-2); }
@@ -315,7 +331,7 @@ kbd { border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; bac
   .source-drawer{top:auto;height:min(78vh,650px);width:100%;border-left:0;border-top:1px solid var(--border);border-radius:18px 18px 0 0;transform:translateY(102%);padding-bottom:max(22px,env(safe-area-inset-bottom))}.source-drawer.open{transform:translateY(0)}
   .toast-region{left:10px;right:10px;bottom:10px}.toast{max-width:none}
 }
-@media (max-width: 420px) { .topbar-title{display:none}.topbar{grid-template-columns:40px 1fr 40px}.topbar-controls{grid-column:2;justify-self:center}.collection-picker{display:none}.model-picker{width:150px}.topbar>.icon-button:last-child{grid-column:3}.suggestion-grid{display:none}.welcome>p{margin-bottom:0}.composer-icon{width:36px}.send-button{width:38px}.theme-options{gap:5px}.theme-options button{padding:5px} }
+@media (max-width: 420px) { .topbar-title{display:none}.topbar{grid-template-columns:40px 1fr 40px}.topbar-controls{grid-column:2;justify-self:center}.collection-picker,.project-picker{display:none}.model-picker{width:150px}.topbar>.icon-button:last-child{grid-column:3}.suggestion-grid{display:none}.welcome>p{margin-bottom:0}.composer-icon{width:36px}.send-button{width:38px}.theme-options{gap:5px}.theme-options button{padding:5px} }
 
 /* Phase 51/52: standalone sign-in/create-account page (not part of the SPA
    view system - it has to work before any authenticated app state exists). */

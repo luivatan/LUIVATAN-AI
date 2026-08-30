@@ -61,6 +61,7 @@ class ApexServices:
     auth: AuthService | None = None
     default_local_user: User | None = None
     collections: Any = None
+    projects: Any = None
     _extras: dict = field(default_factory=dict)
 
     @property
@@ -248,6 +249,10 @@ def build_services(
         from apex_ai.documents.collections import CollectionStore
 
         services.collections = CollectionStore(settings.collections_db_path)
+
+        from apex_ai.projects.store import ProjectStore
+
+        services.projects = ProjectStore(settings.projects_db_path)
 
         # Phase 55: pre-Phase-55 chunks/registry entries have no owner yet;
         # assign them to the default local account, same precedent as

@@ -52,6 +52,10 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
 - **Document collections** (Phase 66/67) — group documents into named knowledge bases and
   scope a conversation's retrieval to one of them; moving a document between collections
   is a registry update only, never a re-embed.
+- **Project workspaces** (Phase 71/72) — group conversations under a shared name,
+  instructions, and a linked collection; a project's instructions are woven into every
+  prompt in its conversations as clearly separated, never-cited guidance, and its linked
+  collection governs retrieval the same way a standalone collection does.
 - **Bounded conversation context** — newest complete turns are selected under configurable
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.
@@ -214,9 +218,11 @@ storage-boundary safety policy in
 |---|---|
 | `POST /chat/stream` | genuine `RagEngine.ask_stream()` events as NDJSON |
 | `POST /chat/stop` | cooperative cancellation at the next provider token |
-| `GET/POST /conversations` | history/search and New Chat records; `POST` accepts an optional `collection_id` to scope retrieval (Phase 67) |
+| `GET/POST /conversations` | history/search and New Chat records; `POST` accepts an optional `collection_id` (Phase 67) or `project_id` (Phase 71) to scope retrieval; `GET` accepts an optional `project_id` filter |
 | `GET/PATCH/DELETE /conversations/{id}` | load, rename, or delete a conversation |
 | `PATCH /conversations/{id}/collection` | change (or clear) which knowledge-base collection a conversation is scoped to |
+| `PATCH /conversations/{id}/project` | move a conversation into (or out of) a project (Phase 71) |
+| `GET/POST /projects`, `PATCH/DELETE /projects/{id}` | project workspace CRUD — name, instructions, and a linked collection (Phase 71/72) |
 | `GET /memory/candidates` | safe pending suggestions awaiting a user decision |
 | `POST /memory/candidates/{id}/approve` or `/reject` | explicit confirmation decision |
 | `POST /documents/upload` | bounded multipart upload into existing ingestion; accepts an optional `collection_id` form field |
@@ -294,6 +300,7 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_LONG_TERM_MEMORY_DB_PATH` | `data/long_term_memory.db` | separate explicit preference/context store; see `APEX_MEMORY_PROMPT_USE` |
 | `APEX_USERS_DB_PATH` | `data/users.db` | accounts + sessions (Phase 51/52) |
 | `APEX_COLLECTIONS_DB_PATH` | `data/collections.db` | named document-collection labels (Phase 66) |
+| `APEX_PROJECTS_DB_PATH` | `data/projects.db` | project workspaces — name, instructions, a linked collection (Phase 71) |
 | `APEX_SESSION_COOKIE_NAME` / `APEX_SESSION_TTL_DAYS` | `apex_session` / `30` | session cookie name and lifetime |
 | `APEX_AUTO_LOGIN_LOCAL` | `1` | `0` = require real sign-in for every request instead of the default-local-account fallback |
 | `APEX_MAX_UPLOAD_MB` | `50` | server-enforced size limit for each browser upload |
