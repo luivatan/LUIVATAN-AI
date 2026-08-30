@@ -251,13 +251,19 @@ class ChromaVectorStore:
         ``document_ids`` (Phase 67) further restricts the search to one
         knowledge-base collection's documents, when a conversation has one
         selected; ``None`` (the default) searches the whole account library.
+
+        Phase 95: this used to call ``self.count(user_id)`` first to clamp
+        ``k``, which fetched every one of the account's chunk IDs just to
+        take ``len()`` of them - a full extra round-trip on every single
+        search. Chroma's own ``query()`` already returns fewer than
+        ``n_results`` (down to zero) when a collection or a ``where`` filter
+        matches fewer rows than requested, including on an empty collection,
+        so the pre-count added no correctness value, only latency.
         """
         if document_ids is not None and not document_ids:
             return []  # Chroma's $in rejects an empty list; zero IDs = zero matches anyway
-        count = self.count(user_id)
-        if count == 0:
-            return []
-        k = min(k, count)
+        if k <= 0:
+            return []  # n_results<=0 raises in Chroma; a non-positive k is trivially "no results"
         where = {"user_id": user_id}
         if document_ids is not None:
             where = {"$and": [where, {"document_id": {"$in": document_ids}}]}

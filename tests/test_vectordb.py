@@ -204,6 +204,45 @@ def test_csv_uploads_are_indexed_and_searchable(ingestion, store, tmp_path):
     assert hits
 
 
+def test_search_does_not_pre_count_the_collection(ingestion, store):
+    """Phase 95: search() used to call count() (a full get() of every one of
+    the account's chunk IDs) before every query just to clamp k - a real,
+    measured latency cost with no correctness benefit, since Chroma's own
+    query() already returns fewer than n_results when fewer rows match.
+    Guard against that round-trip coming back."""
+    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
+
+    original_get = store.collection.get
+
+    def _tracking_get(*args, **kwargs):
+        raise AssertionError(
+            "search() should not call collection.get() - it no longer needs "
+            "a pre-count to clamp k"
+        )
+
+    store.collection.get = _tracking_get
+    try:
+        hits = store.search("fever in adults temperature", USER, k=3)
+    finally:
+        store.collection.get = original_get
+    assert hits
+
+
+def test_search_on_an_empty_collection_returns_no_results(store):
+    assert store.search("anything", USER, k=5) == []
+
+
+def test_search_for_an_unknown_user_returns_no_results(ingestion, store):
+    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
+    assert store.search("fever", OTHER_USER, k=5) == []
+
+
+@pytest.mark.parametrize("k", [0, -1])
+def test_search_with_non_positive_k_returns_no_results(ingestion, store, k):
+    ingestion.ingest_path(DATA_DIR / "sample_first_aid.pdf", USER)
+    assert store.search("fever", USER, k=k) == []
+
+
 def test_count_failure_is_wrapped_as_actionable_database_error():
     class BrokenCollection:
         @staticmethod
