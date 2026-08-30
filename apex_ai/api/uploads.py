@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import shutil
 import uuid
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from apex_ai.api.auth import make_require_user_dependency
-from apex_ai.api.errors import APIError, service_not_ready_error
+from apex_ai.api.errors import APIError, entitlement_error, service_not_ready_error
 from apex_ai.api.schemas import IngestOut, UploadOut
 from apex_ai.core.logging import get_logger
 from apex_ai.documents.extraction import SUPPORTED_EXTENSIONS
@@ -79,6 +80,21 @@ def create_upload_router(services) -> APIRouter:
                     "The uploaded file is empty.",
                     code="empty_upload",
                 )
+
+            if services.entitlements is not None:
+                document_count = services.ingestion.stats(user.id)["documents"]
+                capacity = services.entitlements.check_capacity(
+                    user.id, "documents", document_count
+                )
+                if not capacity.allowed:
+                    raise entitlement_error(capacity.reason)
+                storage_used_mb = services.ingestion.storage_bytes(user.id) // (1024 * 1024)
+                requested_mb = math.ceil(size / (1024 * 1024))
+                storage_capacity = services.entitlements.check_capacity(
+                    user.id, "storage_mb", storage_used_mb, requested_increase=requested_mb
+                )
+                if not storage_capacity.allowed:
+                    raise entitlement_error(storage_capacity.reason)
 
             result = services.ingestion.ingest_path(
                 staged_file, user.id, collection_id=collection_id

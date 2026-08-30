@@ -14,9 +14,11 @@ def wired_services(settings, ingestion, embeddings, store):
     from apex_ai.auth.sessions import SessionStore
     from apex_ai.auth.users import UserStore
     from apex_ai.billing import EntitlementService, SubscriptionStore, UsageStore
+    from apex_ai.documents.collections import CollectionStore
     from apex_ai.memory.conversation import ConversationMemory
     from apex_ai.models.manager import ModelManager
     from apex_ai.models.router import ModelRouter
+    from apex_ai.projects.store import ProjectStore
     from apex_ai.rag.engine import RagEngine
     from apex_ai.rag.query_processing import QueryProcessor
     from apex_ai.retrieval.keyword import BM25Index
@@ -50,6 +52,8 @@ def wired_services(settings, ingestion, embeddings, store):
         model_router=ModelRouter(manager, max_fast_model_mb=settings.max_fast_model_mb),
         subscriptions=subscriptions, usage=usage,
         entitlements=EntitlementService(subscriptions, usage),
+        collections=CollectionStore(settings.collections_db_path),
+        projects=ProjectStore(settings.projects_db_path),
         auth=auth, default_local_user=default_local_user,
     )
 
@@ -383,6 +387,133 @@ def test_billing_plan_endpoint_reflects_an_administratively_set_plan(
     response = api_client.get("/billing/plan")
     assert response.status_code == 200
     assert response.json()["plan"]["id"] == "pro"
+
+
+# ---------------- Phase 87-88: entitlement enforcement + usage tracking ----------------
+
+
+def _events(response):
+    import json
+
+    return [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+
+def test_creating_a_collection_beyond_the_plan_limit_is_rejected(api_client, wired_services):
+    for index in range(3):  # the free plan's max_collections
+        assert api_client.post("/collections", json={"name": f"Collection {index}"}).status_code == 201
+
+    response = api_client.post("/collections", json={"name": "One too many"})
+    assert response.status_code == 402
+    assert response.json()["error"]["code"] == "plan_limit_exceeded"
+
+
+def test_creating_a_project_beyond_the_plan_limit_is_rejected(api_client, wired_services):
+    assert api_client.post("/projects", json={"name": "First"}).status_code == 201
+    response = api_client.post("/projects", json={"name": "One too many"})  # free plan: 1 max
+    assert response.status_code == 402
+    assert response.json()["error"]["code"] == "plan_limit_exceeded"
+
+
+def test_upgrading_the_plan_lifts_a_previously_hit_collection_limit(api_client, wired_services):
+    for index in range(3):
+        api_client.post("/collections", json={"name": f"Collection {index}"})
+    blocked = api_client.post("/collections", json={"name": "Blocked"})
+    assert blocked.status_code == 402
+
+    wired_services.subscriptions.set_plan(wired_services.default_local_user.id, "pro")
+
+    allowed = api_client.post("/collections", json={"name": "Now allowed"})
+    assert allowed.status_code == 201
+
+
+def test_uploading_a_document_beyond_the_plan_document_limit_is_rejected(
+    api_client, wired_services, monkeypatch
+):
+    """wired_services already ingests one document during fixture setup;
+    monkeypatching a 1-document ceiling onto the free plan avoids uploading
+    20 real files just to reach the real default limit."""
+    from apex_ai.billing.plans import PLANS, Plan, PlanLimits
+
+    tiny_free = Plan(
+        id="free", name="Free", price_cents=0,
+        limits=PlanLimits(
+            max_documents=1, max_storage_mb=1000, max_collections=10,
+            max_projects=10, max_messages_per_month=1000, max_tool_calls_per_month=1000,
+        ),
+    )
+    monkeypatch.setitem(PLANS, "free", tiny_free)
+
+    content = (DATA_DIR / "burn_care.md").read_bytes()
+    response = api_client.post(
+        "/documents/upload", files={"file": ("burn_care.md", content, "text/markdown")}
+    )
+    assert response.status_code == 402
+    assert response.json()["error"]["code"] == "plan_limit_exceeded"
+
+
+def test_chat_stream_rejects_a_new_message_beyond_the_plan_message_limit(
+    api_client, wired_services, monkeypatch
+):
+    from apex_ai.billing.plans import PLANS, Plan, PlanLimits
+
+    no_messages = Plan(
+        id="free", name="Free", price_cents=0,
+        limits=PlanLimits(
+            max_documents=1000, max_storage_mb=1000, max_collections=100,
+            max_projects=100, max_messages_per_month=0, max_tool_calls_per_month=1000,
+        ),
+    )
+    monkeypatch.setitem(PLANS, "free", no_messages)
+
+    response = api_client.post(
+        "/chat/stream", json={"question": "hello", "request_id": "rate-limited"}
+    )
+    assert response.status_code == 402
+    assert response.json()["error"]["code"] == "plan_limit_exceeded"
+
+
+def test_chat_stream_records_message_usage_on_a_new_message(api_client, wired_services):
+    user_id = wired_services.default_local_user.id
+    assert wired_services.usage.total_this_month(user_id, "messages") == 0
+
+    response = api_client.post(
+        "/chat/stream",
+        json={"question": "What temperature is a fever in adults?", "request_id": "usage-1"},
+    )
+    final = next(item for item in _events(response) if item["type"] == "final")
+    assert final is not None
+    assert wired_services.usage.total_this_month(user_id, "messages") == 1
+
+
+def test_chat_stream_regenerate_does_not_double_count_message_usage(api_client, wired_services):
+    user_id = wired_services.default_local_user.id
+    first = api_client.post(
+        "/chat/stream",
+        json={"question": "What temperature is a fever in adults?", "request_id": "usage-a"},
+    )
+    conversation_id = next(item for item in _events(first) if item["type"] == "meta")[
+        "conversation"
+    ]["id"]
+    assert wired_services.usage.total_this_month(user_id, "messages") == 1
+
+    api_client.post(
+        "/chat/stream",
+        json={"conversation_id": conversation_id, "regenerate": True, "request_id": "usage-b"},
+    )
+    assert wired_services.usage.total_this_month(user_id, "messages") == 1
+
+
+def test_billing_usage_endpoint_reports_real_counts(api_client, wired_services):
+    api_client.post("/collections", json={"name": "One"})
+    response = api_client.get("/billing/usage")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["subscription"]["plan"]["id"] == "free"
+    by_resource = {item["resource"]: item for item in payload["entitlements"]}
+    assert by_resource["collections"]["used"] == 1
+    assert by_resource["documents"]["used"] == 1  # ingested during fixture setup
+    assert "messages" in by_resource
+    assert "tool_calls" in by_resource
 
 
 def test_memory_confirmation_endpoint_degrades_when_optional_store_is_unavailable(

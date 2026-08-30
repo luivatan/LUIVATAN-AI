@@ -91,6 +91,11 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   (messages, tool calls), `GET /billing/plans` / `GET /billing/plan`. Architecture only —
   no real payment provider is connected; see `docs/PHASE81-84_SUBSCRIPTION_PLANS.md` and
   the Section 8 decision docs for what's deliberately not built and why.
+- **Entitlement enforcement + usage tracking** (Phase 87/88) — plan limits are enforced
+  for real: document upload, collection/project creation, and new chat messages are all
+  checked against the caller's plan before they happen, with a clear "upgrade to continue"
+  (HTTP 402) response when a limit is hit. `GET /billing/usage` reports real live counts
+  and recorded usage against every plan limit.
 - **Bounded conversation context** — newest complete turns are selected under configurable
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.
@@ -259,6 +264,7 @@ storage-boundary safety policy in
 | `PATCH /conversations/{id}/project` | move a conversation into (or out of) a project (Phase 71) |
 | `GET/POST /projects`, `PATCH/DELETE /projects/{id}` | project workspace CRUD — name, instructions, and a linked collection (Phase 71/72) |
 | `GET /billing/plans`, `GET /billing/plan` | the plan catalog, and the caller's current subscription (Phase 81-84) |
+| `GET /billing/usage` | real live usage against every plan limit — documents, storage, collections, projects, messages/month, tool calls/month (Phase 88) |
 | `GET /memory/candidates` | safe pending suggestions awaiting a user decision |
 | `POST /memory/candidates/{id}/approve` or `/reject` | explicit confirmation decision |
 | `POST /documents/upload` | bounded multipart upload into existing ingestion; accepts an optional `collection_id` form field |

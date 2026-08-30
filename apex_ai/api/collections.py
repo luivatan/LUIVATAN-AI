@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from apex_ai.api.auth import make_require_user_dependency
-from apex_ai.api.errors import APIError
+from apex_ai.api.errors import APIError, entitlement_error
 from apex_ai.api.schemas import CollectionOut, DeletedOut
 from apex_ai.core.errors import ApexError
 
@@ -46,6 +46,12 @@ def create_collections_router(services) -> APIRouter:
 
     @router.post("", status_code=201, response_model=CollectionOut)
     def create_collection(payload: CollectionCreate, user=Depends(require_user)):
+        if services.entitlements is not None:
+            capacity = services.entitlements.check_capacity(
+                user.id, "collections", len(store().list(user.id))
+            )
+            if not capacity.allowed:
+                raise entitlement_error(capacity.reason)
         try:
             return store().create(user.id, payload.name).to_dict()
         except ValueError as error:

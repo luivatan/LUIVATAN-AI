@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from apex_ai.api.auth import make_require_user_dependency
 from apex_ai.api.errors import (
+    entitlement_error,
     internal_error_problem,
     problem_from_apex,
     service_not_ready_error,
@@ -402,6 +403,10 @@ def create_chat_router(
             question = payload.question.strip()
             if not question:
                 raise HTTPException(status_code=422, detail="Type a message first.")
+            if services.entitlements is not None:
+                rate = services.entitlements.check_rate(user.id, "messages")
+                if not rate.allowed:
+                    raise entitlement_error(rate.reason)
 
         # Reserve the conversation before persisting a new user message. A rejected
         # concurrent request must not leave an orphan question in history.
@@ -415,6 +420,8 @@ def create_chat_router(
             except Exception:
                 generations.unregister(request_id)
                 raise
+            if services.usage is not None:
+                services.usage.record(user.id, "messages")
 
         memory_candidates: list[dict] = []
         if not payload.regenerate and services.memory_confirmation is not None:

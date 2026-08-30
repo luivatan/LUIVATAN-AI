@@ -170,6 +170,15 @@ def service_not_ready_error() -> APIError:
     )
 
 
+def entitlement_error(reason: str) -> APIError:
+    """A plan-limit-exceeded response (Phase 87), built from an
+    ``EntitlementResult.reason`` string rather than importing the billing
+    package's type here - this module stays a plain HTTP-error helper.
+    Not retryable: the fix is upgrading the plan, not retrying the same
+    request."""
+    return APIError(402, reason, code="plan_limit_exceeded", retryable=False)
+
+
 def _response(
     status_code: int,
     problem: dict[str, Any],
@@ -259,6 +268,7 @@ def install_error_handlers(app: FastAPI) -> None:
 
 __all__ = [
     "APIError",
+    "entitlement_error",
     "error_problem",
     "install_error_handlers",
     "internal_error_problem",

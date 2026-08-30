@@ -380,6 +380,20 @@ class IngestionService:
             self._save_registry()
         return changed
 
+    def storage_bytes(self, user_id: str) -> int:
+        """Real on-disk size of every document ``user_id`` owns (Phase
+        87-88's storage-capacity check reads this). Not a stored/cached
+        figure - the file on disk is the actual thing consuming storage,
+        so a moved/deleted file (``OSError``) simply contributes nothing
+        rather than raising and blocking the check."""
+        total = 0
+        for info in self.list_documents(user_id):
+            try:
+                total += Path(info.path).stat().st_size
+            except OSError:
+                continue
+        return total
+
     def stats(self, user_id: str | None = None) -> dict:
         """Document/chunk counts. ``user_id=None`` is the whole instance's
         total, for system-wide diagnostics (health checks) only."""

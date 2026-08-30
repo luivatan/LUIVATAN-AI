@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from apex_ai.api.auth import make_require_user_dependency
-from apex_ai.api.errors import APIError
+from apex_ai.api.errors import APIError, entitlement_error
 from apex_ai.api.schemas import DeletedOut, ProjectOut
 from apex_ai.core.errors import ApexError
 from apex_ai.memory.conversations import ConversationStore
@@ -70,6 +70,12 @@ def create_projects_router(services, conversations: ConversationStore) -> APIRou
     def create_project(payload: ProjectCreate, user=Depends(require_user)):
         collection_id = payload.collection_id or ""
         _validate_collection(user.id, collection_id)
+        if services.entitlements is not None:
+            capacity = services.entitlements.check_capacity(
+                user.id, "projects", len(store().list(user.id))
+            )
+            if not capacity.allowed:
+                raise entitlement_error(capacity.reason)
         try:
             return store().create(
                 user.id, payload.name, payload.instructions, collection_id
