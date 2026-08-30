@@ -721,7 +721,7 @@ function regenerateResponse() {
 }
 
 function queueFiles(files) {
-  const allowed = ["pdf", "txt", "md", "markdown", "json"];
+  const allowed = ["pdf", "txt", "md", "markdown", "json", "csv", "tsv"];
   [...files].forEach(file => {
     const extension = file.name.split(".").pop().toLowerCase();
     if (!allowed.includes(extension)) { toast(`${file.name}: unsupported file type.`, "error"); return; }

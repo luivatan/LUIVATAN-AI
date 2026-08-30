@@ -128,7 +128,7 @@
             <span class="privacy-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2M5 10h14v11H5z"/></svg>Runs on your configured backend</span>
           </div>
         </div>
-        <div class="drop-overlay" id="dropOverlay"><div><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M5 15v4h14v-4"/></svg><strong>Drop documents to add knowledge</strong><span>PDF, TXT, Markdown, or JSON</span></div></div>
+        <div class="drop-overlay" id="dropOverlay"><div><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M5 15v4h14v-4"/></svg><strong>Drop documents to add knowledge</strong><span>PDF, TXT, Markdown, JSON, CSV, or TSV</span></div></div>
       </section>
 
       <section class="view page-view" id="projectsView" aria-label="Projects">
@@ -142,7 +142,7 @@
         <div class="page-container">
           <div class="page-heading"><div><span class="eyebrow">KNOWLEDGE BASE</span><h1>Documents</h1><p>Everything Apex AI can retrieve and cite in your answers.</p></div><button class="primary-button" id="pageUploadButton"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M5 15v4h14v-4"/></svg>Upload documents</button></div>
           <div class="collection-filter-row" id="collectionFilterRow" role="tablist" aria-label="Filter by collection"></div>
-          <div class="upload-zone" id="documentDropZone" tabindex="0"><div class="upload-icon"><svg viewBox="0 0 24 24"><path d="M7 18a4.6 4.6 0 0 1-.4-9.2A6 6 0 0 1 18.2 10 4 4 0 0 1 18 18M12 16V9m0 0-3 3m3-3 3 3"/></svg></div><strong>Drop files here, or click to browse</strong><span>PDF, TXT, Markdown, and JSON · up to <b id="uploadLimit">50 MB</b> each<br><span id="uploadCollectionNote"></span></span></div>
+          <div class="upload-zone" id="documentDropZone" tabindex="0"><div class="upload-icon"><svg viewBox="0 0 24 24"><path d="M7 18a4.6 4.6 0 0 1-.4-9.2A6 6 0 0 1 18.2 10 4 4 0 0 1 18 18M12 16V9m0 0-3 3m3-3 3 3"/></svg></div><strong>Drop files here, or click to browse</strong><span>PDF, TXT, Markdown, JSON, CSV, and TSV · up to <b id="uploadLimit">50 MB</b> each<br><span id="uploadCollectionNote"></span></span></div>
           <div class="section-header"><div><h2>Indexed documents</h2><span id="librarySummary">Loading…</span></div><button class="quiet-button" id="refreshDocuments"><svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.3-2.5L20 9M4 15l2.6 2.5A7 7 0 0 0 17.9 15"/></svg>Refresh</button></div>
           <div class="document-library" id="documentLibrary"></div>
           <div class="medical-notice"><svg viewBox="0 0 24 24"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 10v6M12 7h.01"/></svg><p><strong>Medical-use notice</strong>Apex AI reports information found in your documents. It is not medical advice, diagnosis, or a substitute for a qualified healthcare professional. Always verify the cited source.</p></div>

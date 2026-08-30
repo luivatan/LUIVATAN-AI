@@ -173,6 +173,37 @@ def test_ingestion_enforces_the_configured_max_document_pages(settings, store, t
     assert "exceeds the 5-page limit" in str(excinfo.value)
 
 
+def test_ingestion_enforces_the_configured_max_csv_rows(settings, store, tmp_path):
+    """Phase 78: IngestionService actually reads settings.max_csv_rows (not
+    just extract_document's own default) when ingesting a real upload."""
+    from apex_ai.config.settings import with_overrides
+
+    large = tmp_path / "large.csv"
+    rows = "\n".join(f"item{i},{i}" for i in range(10))
+    large.write_text(f"name,value\n{rows}\n")
+
+    strict = with_overrides(settings, max_csv_rows=5)
+    ingestion = IngestionService(strict, store)
+
+    from apex_ai.core.errors import DocumentProcessingError
+
+    with pytest.raises(DocumentProcessingError) as excinfo:
+        ingestion.ingest_path(large, USER)
+    assert "exceeds the 5-row limit" in str(excinfo.value)
+
+
+def test_csv_uploads_are_indexed_and_searchable(ingestion, store, tmp_path):
+    path = tmp_path / "patients.csv"
+    path.write_text("name,temperature\nAlex,38.5\nJordan,37.0\n")
+
+    result = ingestion.ingest_path(path, USER)
+    assert result.status == "indexed"
+    assert result.chunks > 0
+
+    hits = store.search("Alex temperature", USER, k=3)
+    assert hits
+
+
 def test_count_failure_is_wrapped_as_actionable_database_error():
     class BrokenCollection:
         @staticmethod

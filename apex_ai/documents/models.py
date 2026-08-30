@@ -35,7 +35,7 @@ class Document:
     document_id: str  # sha256 of the file bytes (duplicate-detection key)
     document_name: str  # sanitized file name shown to users
     source_path: str  # where the file lives on disk
-    file_type: str  # pdf | txt | md | json
+    file_type: str  # pdf | txt | md | json | csv | tsv
     pages: list[Page] = field(default_factory=list)
     empty_pages: list[int] = field(default_factory=list)  # scanned/blank page numbers
     created_at: str = field(default_factory=utc_now_iso)

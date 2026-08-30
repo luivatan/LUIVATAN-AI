@@ -113,6 +113,10 @@ class Settings:
     # pathological page count (many near-empty pages) that would exhaust
     # memory/time extracting and chunking it in one request.
     max_document_pages: int = 2000
+    # Phase 78: same reasoning as max_document_pages, for CSV/TSV row counts -
+    # a spreadsheet can be well within max_upload_mb and still have an
+    # extreme row count.
+    max_csv_rows: int = 5000
 
     # --- retrieval ------------------------------------------------------
     top_k: int = 12  # fused candidate pool (~10-20 per spec)
@@ -323,6 +327,7 @@ def load_settings() -> Settings:
         max_document_pages=max(
             1, _int(_env("APEX_MAX_DOCUMENT_PAGES", default="2000"), 2000)
         ),
+        max_csv_rows=max(1, _int(_env("APEX_MAX_CSV_ROWS", default="5000"), 5000)),
         top_k=max(1, _int(_env("APEX_TOP_K", default="12"), 12)),
         semantic_candidate_k=max(
             1, _int(_env("APEX_SEMANTIC_CANDIDATES", default="16"), 16)

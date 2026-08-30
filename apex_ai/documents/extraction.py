@@ -1,4 +1,4 @@
-"""Text extraction for PDF, TXT, Markdown and JSON sources.
+"""Text extraction for PDF, TXT, Markdown, JSON, CSV and TSV sources.
 
 Goals (in priority order):
 1. Never lose page numbers (required for citations).
@@ -11,6 +11,8 @@ Goals (in priority order):
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import re
 from pathlib import Path
@@ -22,7 +24,7 @@ from apex_ai.security.files import sanitize_filename, sha256_file
 
 log = get_logger("extract")
 
-SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown", ".json"}
+SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown", ".json", ".csv", ".tsv"}
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _SOFT_HYPHEN = "\u00ad"
@@ -232,13 +234,86 @@ def _extract_json(path, document_id: str, name: str) -> Document:
     )
 
 
-def extract_document(path, max_pages: int | None = None) -> Document:
+def _extract_csv(
+    path, document_id: str, name: str, file_type: str, delimiter: str, max_rows: int | None = None
+) -> Document:
+    """Extract CSV/TSV as one row-per-paragraph text page (Phase 78).
+
+    Each data row becomes ``"column: value, column: value, ..."`` so the
+    existing paragraph-based ``Chunker`` groups rows together the same way
+    it already groups sentences - no CSV-specific chunking path is needed.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as error:
+        raise DocumentProcessingError(
+            what=f"The file `{name}` could not be read.",
+            why=str(error),
+            fix="Check the file exists and is readable.",
+        ) from error
+
+    rows = list(csv.reader(io.StringIO(raw), delimiter=delimiter))
+    if not rows:
+        raise DocumentProcessingError(
+            what=f"`{name}` contains no rows.",
+            why="The file appears to be empty.",
+            fix="Upload a file with a header row and at least one data row.",
+        )
+
+    header = [cell.strip() for cell in rows[0]]
+    data_rows = rows[1:]
+    if not data_rows:
+        raise DocumentProcessingError(
+            what=f"`{name}` has a header row but no data rows.",
+            why="There is nothing to index beyond the column names.",
+            fix="Upload a file that includes at least one data row.",
+        )
+    if max_rows is not None and len(data_rows) > max_rows:
+        raise DocumentProcessingError(
+            what=f"`{name}` has {len(data_rows)} data rows, which exceeds the "
+                 f"{max_rows}-row limit.",
+            why="Indexing an extremely large spreadsheet in one request risks "
+                "exhausting memory and taking a very long time.",
+            fix="Split the file into smaller files and upload them separately, or raise "
+                "APEX_MAX_CSV_ROWS in .env if this machine can handle larger files.",
+        )
+
+    paragraphs = []
+    for row in data_rows:
+        cells = [cell.strip() for cell in row]
+        if not any(cells):
+            continue  # a fully blank row carries no content
+        pairs = [f"{column}: {value}" for column, value in zip(header, cells) if column and value]
+        if pairs:
+            paragraphs.append(", ".join(pairs))
+
+    text = "\n\n".join(paragraphs)
+    if len(text.strip()) < 20:
+        raise DocumentProcessingError(
+            what=f"`{name}` contains no usable text content.",
+            why="Every data row was empty or had no matching column values.",
+            fix="Check the file has a header row followed by real data.",
+        )
+
+    return Document(
+        document_id=document_id,
+        document_name=name,
+        source_path=str(path),
+        file_type=file_type,
+        pages=[Page(number=1, text=text)],
+    )
+
+
+def extract_document(
+    path, max_pages: int | None = None, max_csv_rows: int | None = None
+) -> Document:
     """Extract a :class:`Document` from any supported file.
 
     Input: path to an existing file. ``max_pages`` (Phase 70) rejects a PDF
     with an excessive page count before any text is extracted from it - a
     file well within the upload size limit can still have a pathological
-    page count.
+    page count. ``max_csv_rows`` (Phase 78) is the same guard for CSV/TSV
+    row counts.
     Output: Document with pages, page numbers preserved.
     Raises: DocumentProcessingError with a user-friendly explanation.
     """
@@ -264,9 +339,13 @@ def extract_document(path, max_pages: int | None = None) -> Document:
         return _extract_text_like(path, document_id, name, "md")
     if suffix == ".json":
         return _extract_json(path, document_id, name)
+    if suffix == ".csv":
+        return _extract_csv(path, document_id, name, "csv", ",", max_rows=max_csv_rows)
+    if suffix == ".tsv":
+        return _extract_csv(path, document_id, name, "tsv", "\t", max_rows=max_csv_rows)
 
     raise DocumentProcessingError(
         what=f"Unsupported file type: `{suffix}`.",
-        why="Apex AI supports PDF, TXT, Markdown and JSON.",
+        why="Apex AI supports PDF, TXT, Markdown, JSON, CSV and TSV.",
         fix="Convert the document to one of the supported formats and try again.",
     )

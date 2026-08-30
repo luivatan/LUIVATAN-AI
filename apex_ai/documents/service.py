@@ -225,7 +225,11 @@ class IngestionService:
         restrict_to_owner(destination)
 
         with timed(log, "document ingestion", level=logging.INFO):
-            document = extract_document(destination, max_pages=self.settings.max_document_pages)
+            document = extract_document(
+                destination,
+                max_pages=self.settings.max_document_pages,
+                max_csv_rows=self.settings.max_csv_rows,
+            )
             chunks = self.chunker.build_chunks(document)
             if not chunks:
                 return IngestResult(

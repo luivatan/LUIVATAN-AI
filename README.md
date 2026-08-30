@@ -71,6 +71,9 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   returns a JSON object matching a caller-supplied schema (real for OpenAI-compatible,
   via its native `response_format: json_schema` mode). No current feature needs it yet
   (surveyed and documented in `docs/PHASE77_STRUCTURED_OUTPUTS.md`); ready for one that does.
+- **CSV/TSV ingestion** (Phase 78) — indexed the same way as any other document: each
+  row becomes one searchable, citable paragraph, reusing the existing chunking/embedding/
+  retrieval pipeline with no CSV-specific code downstream of extraction.
 - **Bounded conversation context** — newest complete turns are selected under configurable
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.
@@ -310,6 +313,7 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_RAG_DEBUG` | `0` | add developer-only trace route when explicitly enabled |
 | `APEX_CHUNK_SIZE` / `_OVERLAP` / `_MIN` / `_MAX` | 1000/150/200/1600 | chunking |
 | `APEX_MAX_DOCUMENT_PAGES` | `2000` | reject a PDF with more pages than this before extracting any text (Phase 70) |
+| `APEX_MAX_CSV_ROWS` | `5000` | reject a CSV/TSV file with more data rows than this (Phase 78) |
 | `APEX_DATABASE_PATH` | `data/chroma` | vector store location |
 | `APEX_CONVERSATION_DB_PATH` | `data/conversations.db` | persistent conversation/history database |
 | `APEX_LONG_TERM_MEMORY_DB_PATH` | `data/long_term_memory.db` | separate explicit preference/context store; see `APEX_MEMORY_PROMPT_USE` |
@@ -359,7 +363,8 @@ environment variables into the process at startup:
 
 ## Document ingestion
 
-Supported: **PDF, TXT, Markdown, JSON**. Attach from chat, use the Documents page, or:
+Supported: **PDF, TXT, Markdown, JSON, CSV, TSV** (Phase 78). Attach from chat, use the
+Documents page, or:
 
 ```bash
 python scripts/ingest_folder.py path/to/folder

@@ -41,7 +41,7 @@ def create_upload_router(services) -> APIRouter:
                     415,
                     (
                         f"Unsupported file type `{suffix or '(none)'}`. "
-                        "Upload PDF, TXT, Markdown, or JSON."
+                        "Upload PDF, TXT, Markdown, JSON, CSV, or TSV."
                     ),
                     code="unsupported_file_type",
                 )

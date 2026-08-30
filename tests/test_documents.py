@@ -115,6 +115,87 @@ def test_max_pages_none_means_no_limit(tmp_path):
     assert "no readable text" in str(excinfo.value).lower()
 
 
+# ------------------------- CSV / TSV (Phase 78) -------------------------
+
+
+def test_csv_extraction_produces_one_paragraph_per_row(tmp_path):
+    path = tmp_path / "patients.csv"
+    path.write_text("name,temperature\nAlex,38.5\nJordan,37.0\n")
+
+    document = extract_document(path)
+    assert document.file_type == "csv"
+    text = document.full_text()
+    assert "name: Alex, temperature: 38.5" in text
+    assert "name: Jordan, temperature: 37.0" in text
+
+
+def test_tsv_extraction_uses_tab_delimiter(tmp_path):
+    path = tmp_path / "patients.tsv"
+    path.write_text("name\ttemperature\nAlex\t38.5\n")
+
+    document = extract_document(path)
+    assert document.file_type == "tsv"
+    assert "name: Alex, temperature: 38.5" in document.full_text()
+
+
+def test_csv_skips_fully_blank_rows(tmp_path):
+    path = tmp_path / "data.csv"
+    path.write_text("name,value\nAlex,1\n,\nJordan,2\n")
+
+    document = extract_document(path)
+    text = document.full_text()
+    assert "name: Alex, value: 1" in text
+    assert "name: Jordan, value: 2" in text
+    assert text.count("name:") == 2
+
+
+def test_csv_with_only_a_header_row_is_rejected(tmp_path):
+    path = tmp_path / "empty.csv"
+    path.write_text("name,value\n")
+
+    with pytest.raises(DocumentProcessingError) as excinfo:
+        extract_document(path)
+    assert "no data rows" in str(excinfo.value)
+
+
+def test_completely_empty_csv_file_is_rejected(tmp_path):
+    path = tmp_path / "empty.csv"
+    path.write_text("")
+
+    with pytest.raises(DocumentProcessingError) as excinfo:
+        extract_document(path)
+    assert "no rows" in str(excinfo.value)
+
+
+def test_csv_exceeding_max_rows_is_rejected_with_the_exact_counts(tmp_path):
+    path = tmp_path / "large.csv"
+    rows = "\n".join(f"item{i},{i}" for i in range(10))
+    path.write_text(f"name,value\n{rows}\n")
+
+    with pytest.raises(DocumentProcessingError) as excinfo:
+        extract_document(path, max_csv_rows=5)
+    message = str(excinfo.value)
+    assert "10 data rows" in message
+    assert "exceeds" in message
+    assert "APEX_MAX_CSV_ROWS" in message
+
+
+def test_csv_max_rows_none_means_no_limit(tmp_path):
+    path = tmp_path / "large.csv"
+    rows = "\n".join(f"item{i},{i}" for i in range(10))
+    path.write_text(f"name,value\n{rows}\n")
+
+    document = extract_document(path, max_csv_rows=None)
+    assert document.full_text().count("name:") == 10
+
+
+def test_csv_is_in_the_supported_extensions_set():
+    from apex_ai.documents.extraction import SUPPORTED_EXTENSIONS
+
+    assert ".csv" in SUPPORTED_EXTENSIONS
+    assert ".tsv" in SUPPORTED_EXTENSIONS
+
+
 # ------------------------- chunking -------------------------
 
 
