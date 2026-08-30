@@ -26,6 +26,9 @@ class OpenAICompatProvider(LLMProvider):
     # documented, and what this provider already speaks for every other
     # request, so no separate translation layer is needed.
     supports_tools = True
+    # Phase 77: the standard OpenAI `response_format: {"type": "json_schema"}`
+    # structured-output mode.
+    supports_structured_output = True
 
     def __init__(self, settings, provider_name: str = "openai_compatible") -> None:
         self.settings = settings
@@ -167,6 +170,59 @@ class OpenAICompatProvider(LLMProvider):
         )
         content = message.get("content")
         return ToolCallResult(content=content, tool_calls=tool_calls)
+
+    def generate_structured(
+        self, messages, schema, *, schema_name="response", max_tokens=512, temperature=0.2
+    ) -> dict:
+        self.validate()
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": schema_name, "schema": schema, "strict": True},
+            },
+        }
+        try:
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=self._headers(),
+                json=payload,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+        except requests.RequestException as error:
+            raise ProviderError(
+                what=f"The API at {self.base_url} could not be reached or returned an error.",
+                why=str(error),
+                fix="Check your internet connection, API key, and APEX_OPENAI_API_BASE. "
+                    "For offline work use APEX_LLM_PROVIDER=llama_cpp.",
+            ) from error
+        except (KeyError, IndexError, json.JSONDecodeError) as error:
+            raise ProviderError(
+                what="The API response could not be parsed.",
+                why=str(error),
+                fix="Verify the endpoint is OpenAI-compatible (/v1/chat/completions) "
+                    "and supports the `response_format` json_schema mode.",
+            ) from error
+        try:
+            data = json.loads(content or "")
+        except json.JSONDecodeError as error:
+            raise ProviderError(
+                what="The model's response was not valid JSON.",
+                why=str(error),
+                fix="This can happen even with structured-output mode enabled; retry the request.",
+            ) from error
+        if not isinstance(data, dict):
+            raise ProviderError(
+                what="The model's structured response was not a JSON object.",
+                why=f"Expected an object, got {type(data).__name__}.",
+                fix="Adjust the requested schema to describe a JSON object at the top level.",
+            )
+        return data
 
     def get_model_info(self) -> ModelInfo:
         return ModelInfo(provider=self.name, model=self.model, path=self.base_url)

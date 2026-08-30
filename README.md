@@ -67,6 +67,10 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   AST-walking evaluator, never `eval()`) and exact list aggregates (sum/mean/median/
   min/max/count/stdev), reachable by the model via `RagEngine.ask_with_tools()` for
   providers with real tool-calling support (OpenAI-compatible today).
+- **Structured-output capability** (Phase 77) — `LLMProvider.generate_structured()`
+  returns a JSON object matching a caller-supplied schema (real for OpenAI-compatible,
+  via its native `response_format: json_schema` mode). No current feature needs it yet
+  (surveyed and documented in `docs/PHASE77_STRUCTURED_OUTPUTS.md`); ready for one that does.
 - **Bounded conversation context** — newest complete turns are selected under configurable
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.

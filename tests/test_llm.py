@@ -221,6 +221,102 @@ def test_openai_provider_generate_with_tools_returns_plain_content_when_no_tool_
     assert result.tool_calls == ()
 
 
+def test_provider_without_structured_output_support_raises_a_clear_error(settings):
+    from apex_ai.llm.local import LocalLLMProvider
+
+    provider = LocalLLMProvider(settings)
+    assert provider.supports_structured_output is False
+    with pytest.raises(ProviderError) as excinfo:
+        provider.generate_structured(
+            [{"role": "user", "content": "hi"}], schema={"type": "object", "properties": {}}
+        )
+    assert "does not support structured output" in str(excinfo.value)
+
+
+def test_openai_provider_generate_structured_returns_parsed_json(settings, monkeypatch):
+    """Phase 77: a real (mocked HTTP) round trip through the OpenAI
+    `response_format: json_schema` mode."""
+    from apex_ai.llm.openai_compat import OpenAICompatProvider
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"summary": "ok", "score": 4}'}}]}
+
+    seen_payloads = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen_payloads.append(json)
+        return Response()
+
+    monkeypatch.setattr("requests.post", fake_post)
+    provider = OpenAICompatProvider(with_overrides(settings, openai_api_key="configured"))
+    assert provider.supports_structured_output is True
+
+    schema = {
+        "type": "object",
+        "properties": {"summary": {"type": "string"}, "score": {"type": "integer"}},
+        "required": ["summary", "score"],
+    }
+    result = provider.generate_structured(
+        [{"role": "user", "content": "rate this"}], schema=schema, schema_name="rating"
+    )
+
+    assert result == {"summary": "ok", "score": 4}
+    assert seen_payloads[0]["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "rating", "schema": schema, "strict": True},
+    }
+
+
+def test_openai_provider_generate_structured_rejects_invalid_json(settings, monkeypatch):
+    from apex_ai.llm.openai_compat import OpenAICompatProvider
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "not json"}}]}
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    provider = OpenAICompatProvider(with_overrides(settings, openai_api_key="configured"))
+
+    with pytest.raises(ProviderError) as excinfo:
+        provider.generate_structured(
+            [{"role": "user", "content": "hi"}], schema={"type": "object", "properties": {}}
+        )
+    assert "not valid JSON" in str(excinfo.value)
+
+
+def test_openai_provider_generate_structured_rejects_a_non_object_top_level(settings, monkeypatch):
+    from apex_ai.llm.openai_compat import OpenAICompatProvider
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "[1, 2, 3]"}}]}
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    provider = OpenAICompatProvider(with_overrides(settings, openai_api_key="configured"))
+
+    with pytest.raises(ProviderError) as excinfo:
+        provider.generate_structured(
+            [{"role": "user", "content": "hi"}], schema={"type": "object", "properties": {}}
+        )
+    assert "not a JSON object" in str(excinfo.value)
+
+
 def test_provider_cache_tracks_api_key_without_retaining_plaintext(settings):
     from apex_ai.llm.registry import _cache_key
 

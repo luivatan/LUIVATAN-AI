@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Iterator
+from typing import Any, Iterator
 
 from apex_ai.core.errors import ProviderError
 
@@ -79,6 +79,9 @@ class LLMProvider(ABC):
     # simulates tool-calling through prompt tricks for a provider whose API
     # doesn't actually support it.
     supports_tools: bool = False
+    # Phase 77: whether generate_structured() below has a real implementation
+    # for this provider - same honest-default reasoning as supports_tools.
+    supports_structured_output: bool = False
 
     @abstractmethod
     def generate(
@@ -137,6 +140,32 @@ class LLMProvider(ABC):
             fix="Use a provider with real tool-calling support "
                 "(APEX_LLM_PROVIDER=openai_compatible), or don't offer tools "
                 "for this request.",
+        )
+
+    def generate_structured(
+        self,
+        messages: list[dict],
+        schema: dict[str, Any],
+        *,
+        schema_name: str = "response",
+        max_tokens: int = 512,
+        temperature: float = 0.2,
+    ) -> dict[str, Any]:
+        """Ask the model to answer with JSON matching ``schema`` (a JSON
+        Schema object) and return the parsed object.
+
+        Default: not supported. Only providers with a real, tested
+        implementation override this - Apex AI never asks a model to "please
+        output JSON" via prompt instructions alone and calls that reliable;
+        this only does anything where the provider's own API can actually
+        constrain or validate the output shape.
+        """
+        raise ProviderError(
+            what=f"The '{self.name}' provider does not support structured output.",
+            why=f"Structured output requires the provider's own JSON-schema "
+                f"response mode; '{self.name}' has none wired up in Apex AI.",
+            fix="Use a provider with real structured-output support "
+                "(APEX_LLM_PROVIDER=openai_compatible).",
         )
 
     @abstractmethod
