@@ -103,6 +103,12 @@ class Settings:
     hf_model_path: str = "Qwen/Qwen2.5-0.5B-Instruct"
     provider_connect_timeout_seconds: float = 5.0
     provider_read_timeout_seconds: float = 300.0
+    # Phase 80: retry-with-backoff for transient network-provider failures
+    # (connection errors, timeouts, HTTP 429/5xx) - never for a
+    # non-transient failure like a bad API key or an unknown model name.
+    # 1 attempt = retries disabled (fail fast on the first failure).
+    provider_retry_max_attempts: int = 3
+    provider_retry_base_delay_seconds: float = 0.5
 
     # --- chunking -------------------------------------------------------
     chunk_size: int = 1000
@@ -339,6 +345,18 @@ def load_settings() -> Settings:
             300.0,
             minimum=0.1,
             maximum=86_400.0,
+        ),
+        provider_retry_max_attempts=_bounded_int(
+            _env("APEX_PROVIDER_RETRY_MAX_ATTEMPTS", default="3"),
+            3,
+            minimum=1,
+            maximum=10,
+        ),
+        provider_retry_base_delay_seconds=_bounded_float(
+            _env("APEX_PROVIDER_RETRY_BASE_DELAY_SECONDS", default="0.5"),
+            0.5,
+            minimum=0.01,
+            maximum=60.0,
         ),
         chunk_size=_int(_env("APEX_CHUNK_SIZE", default="1000"), 1000),
         chunk_overlap=_int(_env("APEX_CHUNK_OVERLAP", default="150"), 150),

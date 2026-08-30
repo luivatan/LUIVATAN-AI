@@ -78,6 +78,14 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   discovered local models by size (a real proxy for local inference latency) and an
   optional configured ceiling (`APEX_MAX_FAST_MODEL_MB`); read-only, does not itself
   change which model is loaded.
+- **Provider retry-with-backoff** (Phase 80) — the Ollama and OpenAI-compatible
+  providers automatically retry a connection error, a timeout, or an HTTP 429/5xx with
+  exponential backoff; a non-transient failure (bad API key, unknown model) is never
+  retried. Combined with the local providers' existing actionable
+  model-not-found/load-failure errors and Phase 73/74's tool-execution safety net, this
+  closes the roadmap's "timeouts, retries, fallbacks, and graceful handling" phase for
+  everything this architecture can honestly deliver — see
+  `docs/PHASE80_RELIABILITY_LAYER.md` for the full audit and what's deliberately not done.
 - **Bounded conversation context** — newest complete turns are selected under configurable
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.
@@ -300,6 +308,8 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_MODEL_PATH` | *(empty)* | exact GGUF file (or pick in UI) |
 | `APEX_MODEL_DIR` | `models` | directory scanned by the model manager |
 | `APEX_MAX_FAST_MODEL_MB` | *(empty = no ceiling)* | caps model size eligible for the router's "fast" task (`GET /models/recommended?task=fast`, Phase 79) |
+| `APEX_PROVIDER_CONNECT_TIMEOUT_SECONDS` / `APEX_PROVIDER_READ_TIMEOUT_SECONDS` | `5` / `300` | HTTP timeouts for the Ollama and OpenAI-compatible providers |
+| `APEX_PROVIDER_RETRY_MAX_ATTEMPTS` / `APEX_PROVIDER_RETRY_BASE_DELAY_SECONDS` | `3` / `0.5` | retry-with-backoff for transient network-provider failures only (connection errors, timeouts, HTTP 429/5xx); `1` attempt disables retries (Phase 80) |
 | `APEX_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | embedding model (independent of the LLM) |
 | `APEX_RERANKER` | `auto` | `auto` / `cross_encoder` / `lexical` / `off` |
 | `APEX_TOP_K` | `12` | fused hybrid candidate pool size |

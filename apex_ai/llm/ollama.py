@@ -14,6 +14,7 @@ import requests
 from apex_ai.core.errors import ConfigurationError, ProviderError
 from apex_ai.core.logging import get_logger
 from apex_ai.llm.base import LLMProvider, ModelInfo
+from apex_ai.llm.retry import RETRYABLE_STATUS_CODES, call_with_retries
 
 log = get_logger("llm.ollama")
 
@@ -32,12 +33,29 @@ class OllamaProvider(LLMProvider):
         )
 
     def _post(self, payload: dict, stream: bool = False):
-        try:
-            return requests.post(
+        """Issue the request, retrying with backoff (Phase 80) on a
+        connection error, a timeout, or a retryable HTTP status (429/5xx) -
+        never on anything else, so a definitively wrong request (e.g. an
+        unknown model, checked by the caller via ``status_code == 404``)
+        still reaches the caller unchanged on the first attempt."""
+
+        def attempt():
+            response = requests.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
                 stream=stream,
                 timeout=self.timeout,
+            )
+            if response.status_code in RETRYABLE_STATUS_CODES:
+                raise requests.HTTPError(response=response)
+            return response
+
+        try:
+            return call_with_retries(
+                attempt,
+                max_attempts=self.settings.provider_retry_max_attempts,
+                base_delay_seconds=self.settings.provider_retry_base_delay_seconds,
+                provider_name=self.name,
             )
         except requests.ConnectionError as error:
             raise ProviderError(
@@ -57,6 +75,13 @@ class OllamaProvider(LLMProvider):
                     "Try a smaller model, reduce generation length, or adjust "
                     "APEX_PROVIDER_READ_TIMEOUT_SECONDS deliberately."
                 ),
+            ) from error
+        except requests.HTTPError as error:
+            status = error.response.status_code if error.response is not None else "unknown"
+            raise ProviderError(
+                what=f"Ollama returned a server error (HTTP {status}).",
+                why="The server responded with a retryable error on every attempt.",
+                fix="Check the Ollama server's own logs, or try again shortly.",
             ) from error
 
     def _messages(self, prompt, messages) -> list[dict]:

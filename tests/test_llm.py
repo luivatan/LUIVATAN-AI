@@ -6,6 +6,7 @@ import sys
 from types import ModuleType, SimpleNamespace
 
 import pytest
+import requests
 
 from apex_ai.config.settings import with_overrides
 from apex_ai.core.errors import (
@@ -173,7 +174,7 @@ def test_openai_provider_generate_with_tools_returns_tool_calls(settings, monkey
 
     seen_payloads = []
 
-    def fake_post(url, headers=None, json=None, timeout=None):
+    def fake_post(url, headers=None, json=None, timeout=None, **kwargs):
         seen_payloads.append(json)
         return Response()
 
@@ -249,7 +250,7 @@ def test_openai_provider_generate_structured_returns_parsed_json(settings, monke
 
     seen_payloads = []
 
-    def fake_post(url, headers=None, json=None, timeout=None):
+    def fake_post(url, headers=None, json=None, timeout=None, **kwargs):
         seen_payloads.append(json)
         return Response()
 
@@ -330,16 +331,150 @@ def test_provider_cache_tracks_api_key_without_retaining_plaintext(settings):
     assert second_secret not in repr(second)
 
 
-def test_ollama_unreachable_gives_provider_error(settings, monkeypatch):
-    """Connection failure must surface as ProviderError with a fix, not a traceback."""
-    import requests
-
+def test_ollama_unreachable_gives_provider_error(settings):
+    """Connection failure must surface as ProviderError with a fix, not a
+    traceback. Retries disabled (max_attempts=1) - this test is about the
+    error-wrapping behavior, not retry timing, which has its own tests."""
     provider = build_provider(with_overrides(
-        settings, llm_provider="ollama", ollama_url="http://127.0.0.1:59999"
+        settings, llm_provider="ollama", ollama_url="http://127.0.0.1:59999",
+        provider_retry_max_attempts=1,
     ))
     with pytest.raises(ProviderError) as excinfo:
         provider.generate("hi")
     assert "HOW TO FIX" in str(excinfo.value)
+
+
+def test_ollama_generate_retries_a_connection_error_then_recovers(settings, monkeypatch):
+    """Phase 80: a real (mocked HTTP) provider actually retries, not just
+    the generic retry helper in isolation."""
+    from apex_ai.llm.ollama import OllamaProvider
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"message": {"content": "recovered"}}
+
+    attempts = {"count": 0}
+
+    def fake_post(*args, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise requests.ConnectionError("transient")
+        return Response()
+
+    monkeypatch.setattr("requests.post", fake_post)
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    provider = OllamaProvider(with_overrides(settings, llm_provider="ollama"))
+
+    assert provider.generate("hi") == "recovered"
+    assert attempts["count"] == 3
+
+
+def test_ollama_generate_does_not_retry_a_model_not_found_response(settings, monkeypatch):
+    """A 404 (unknown model) must reach the caller's friendly error on the
+    first attempt - retrying it would never help and would just delay a
+    real configuration problem the user needs to fix."""
+    from apex_ai.llm.ollama import OllamaProvider
+
+    class Response:
+        status_code = 404
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {}
+
+    attempts = {"count": 0}
+
+    def fake_post(*args, **kwargs):
+        attempts["count"] += 1
+        return Response()
+
+    monkeypatch.setattr("requests.post", fake_post)
+    provider = OllamaProvider(with_overrides(settings, llm_provider="ollama"))
+
+    with pytest.raises(ProviderError) as excinfo:
+        provider.generate("hi")
+    assert "does not know the model" in str(excinfo.value)
+    assert attempts["count"] == 1
+
+
+def test_openai_provider_generate_retries_a_503_then_recovers(settings, monkeypatch):
+    from apex_ai.llm.openai_compat import OpenAICompatProvider
+
+    class OkResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "recovered"}}]}
+
+    attempts = {"count": 0}
+
+    def fake_post(*args, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 2:
+            response = requests.Response()
+            response.status_code = 503
+            raise requests.HTTPError(response=response)
+        return OkResponse()
+
+    monkeypatch.setattr("requests.post", fake_post)
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    provider = OpenAICompatProvider(with_overrides(settings, openai_api_key="configured"))
+
+    assert provider.generate("hi") == "recovered"
+    assert attempts["count"] == 2
+
+
+def test_openai_provider_generate_exhausts_retries_and_raises_provider_error(
+    settings, monkeypatch
+):
+    from apex_ai.llm.openai_compat import OpenAICompatProvider
+
+    attempts = {"count": 0}
+
+    def fake_post(*args, **kwargs):
+        attempts["count"] += 1
+        response = requests.Response()
+        response.status_code = 503
+        raise requests.HTTPError(response=response)
+
+    monkeypatch.setattr("requests.post", fake_post)
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    provider = OpenAICompatProvider(with_overrides(
+        settings, openai_api_key="configured", provider_retry_max_attempts=3,
+    ))
+
+    with pytest.raises(ProviderError):
+        provider.generate("hi")
+    assert attempts["count"] == 3
+
+
+def test_openai_provider_generate_does_not_retry_an_unauthorized_response(settings, monkeypatch):
+    from apex_ai.llm.openai_compat import OpenAICompatProvider
+
+    attempts = {"count": 0}
+
+    def fake_post(*args, **kwargs):
+        attempts["count"] += 1
+        response = requests.Response()
+        response.status_code = 401
+        raise requests.HTTPError(response=response)
+
+    monkeypatch.setattr("requests.post", fake_post)
+    provider = OpenAICompatProvider(with_overrides(settings, openai_api_key="configured"))
+
+    with pytest.raises(ProviderError):
+        provider.generate("hi")
+    assert attempts["count"] == 1
 
 
 def test_model_manager_discovery_and_validation(settings, tmp_path):

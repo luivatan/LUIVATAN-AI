@@ -15,6 +15,7 @@ import requests
 from apex_ai.core.errors import ConfigurationError, ProviderError
 from apex_ai.core.logging import get_logger
 from apex_ai.llm.base import LLMProvider, ModelInfo, ToolCall, ToolCallResult
+from apex_ai.llm.retry import call_with_retries
 
 log = get_logger("llm.openai")
 
@@ -56,6 +57,32 @@ class OpenAICompatProvider(LLMProvider):
             "Content-Type": "application/json",
         }
 
+    def _post(self, payload: dict, *, stream: bool = False):
+        """Issue the request, retrying with backoff (Phase 80) on a
+        connection error, a timeout, or a retryable HTTP status (429/5xx).
+        A non-retryable error status (401, 400, 404, ...) still raises
+        ``requests.HTTPError`` on the first attempt via ``raise_for_status``,
+        unchanged - every caller's existing ``except requests.RequestException``
+        handling is untouched either way."""
+
+        def attempt():
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=self._headers(),
+                json=payload,
+                stream=stream,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response
+
+        return call_with_retries(
+            attempt,
+            max_attempts=self.settings.provider_retry_max_attempts,
+            base_delay_seconds=self.settings.provider_retry_base_delay_seconds,
+            provider_name=self.name,
+        )
+
     def _payload(self, prompt, messages, max_tokens, temperature, stop, stream: bool) -> dict:
         body_messages = messages or [{"role": "user", "content": prompt or ""}]
         payload = {
@@ -72,13 +99,9 @@ class OpenAICompatProvider(LLMProvider):
     def generate(self, prompt=None, *, messages=None, max_tokens=512, temperature=0.2, stop=None):
         self.validate()
         try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=self._headers(),
-                json=self._payload(prompt, messages, max_tokens, temperature, stop, False),
-                timeout=self.timeout,
+            response = self._post(
+                self._payload(prompt, messages, max_tokens, temperature, stop, False)
             )
-            response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"].strip()
         except requests.RequestException as error:
             raise ProviderError(
@@ -97,14 +120,9 @@ class OpenAICompatProvider(LLMProvider):
     def stream(self, prompt=None, *, messages=None, max_tokens=512, temperature=0.2, stop=None):
         self.validate()
         try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=self._headers(),
-                json=self._payload(prompt, messages, max_tokens, temperature, stop, True),
-                stream=True,
-                timeout=self.timeout,
+            response = self._post(
+                self._payload(prompt, messages, max_tokens, temperature, stop, True), stream=True
             )
-            response.raise_for_status()
             for raw_line in response.iter_lines(decode_unicode=True):
                 if not raw_line or not raw_line.startswith("data:"):
                     continue
@@ -137,13 +155,7 @@ class OpenAICompatProvider(LLMProvider):
             "tools": tools,
         }
         try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=self._headers(),
-                json=payload,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
+            response = self._post(payload)
             message = response.json()["choices"][0]["message"]
         except requests.RequestException as error:
             raise ProviderError(
@@ -186,13 +198,7 @@ class OpenAICompatProvider(LLMProvider):
             },
         }
         try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=self._headers(),
-                json=payload,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
+            response = self._post(payload)
             content = response.json()["choices"][0]["message"]["content"]
         except requests.RequestException as error:
             raise ProviderError(
