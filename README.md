@@ -462,6 +462,18 @@ every plan's call to action leads to the same real sign-up flow at
 Business aren't available yet rather than implying a checkout that
 doesn't exist.
 
+## Demo (Phase 97)
+
+`scripts/seed_demo.py` idempotently seeds a real "Demo: Apex Research"
+collection from the small, synthetic document set already used by the
+evaluation harness (`eval/docs/`), so a live walkthrough produces the
+same result every time. `docs/DEMO_SCRIPT.md` is the accompanying
+script: chat → upload a document live → ask a question → grounded
+answer → sources, using questions and expected answers already verified
+against `eval/dataset.example.jsonl`, including one question the
+documents genuinely can't answer, to show the evidence gate declining to
+guess.
+
 ## Evaluation
 
 ```bash
