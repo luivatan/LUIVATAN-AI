@@ -46,9 +46,14 @@ def main() -> int:
         print(f"No supported files (PDF/TXT/MD/JSON) found in {args.folder}")
         return 0
 
+    if services.default_local_user is None:
+        print("No default local account is available to own these documents.")
+        return 1
+    user_id = services.default_local_user.id
+
     for path in files:
         try:
-            result = services.ingestion.ingest_path(path, force=args.force)
+            result = services.ingestion.ingest_path(path, user_id, force=args.force)
             print(f"[{result.status}] {result.message}")
         except ApexError as error:
             print(f"[error] {path.name}:\n{error.public_message()}\n")
@@ -57,7 +62,7 @@ def main() -> int:
             print(f"[error] {path.name}:\n{UNEXPECTED_ERROR_MESSAGE}\n")
 
     try:
-        stats = services.ingestion.stats()
+        stats = services.ingestion.stats(user_id)
         print(
             f"\nDone. Library now holds {stats['documents']} document(s), "
             f"{stats['chunks']} chunk(s)."
