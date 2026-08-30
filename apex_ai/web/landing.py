@@ -116,6 +116,39 @@ def render_landing_html() -> str:
         <a class="primary-button landing-cta" href="/login">Get started free</a>
         <a class="quiet-button landing-cta" href="#features">See how it works</a>
       </div>
+
+      <div class="landing-preview" aria-hidden="true">
+        <div class="landing-preview-topbar">
+          <span class="brand-mark" aria-hidden="true">A</span>
+          <span>Apex AI</span>
+          <span class="landing-preview-online"><i></i>Online</span>
+        </div>
+        <div class="landing-preview-body">
+          <div class="landing-preview-sidebar">
+            <div class="new-chat-button"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>New chat</span></div>
+            <div class="landing-preview-nav">
+              <div class="sidebar-link active"><svg viewBox="0 0 24 24"><path d="M4 4h16v12H7l-3 3z"/></svg><span>Recents</span></div>
+              <div class="sidebar-link"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>Projects</span></div>
+              <div class="sidebar-link"><svg viewBox="0 0 24 24"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H10l2 2h5.5A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z"/></svg><span>Documents</span></div>
+              <div class="sidebar-link"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.38.34.72.64.98.3.25.68.4 1.06.42h.1v4h-.1A1.7 1.7 0 0 0 19.4 15z"/></svg><span>Settings</span></div>
+            </div>
+          </div>
+          <div class="landing-preview-main">
+            <p class="landing-preview-heading">What can I help with?</p>
+            <div class="landing-preview-suggestions">
+              <div class="suggestion"><span>Analyze my documents</span></div>
+              <div class="suggestion"><span>Help me build an application</span></div>
+              <div class="suggestion"><span>Research a topic</span></div>
+              <div class="suggestion"><span>Explain complex information</span></div>
+            </div>
+            <div class="composer landing-preview-composer">
+              <span class="composer-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m20.5 11.5-8.7 8.7a5 5 0 0 1-7.1-7.1l9.1-9.1a3.5 3.5 0 0 1 5 5l-9.1 9.1a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></span>
+              <span class="landing-preview-input">Message Apex AI…</span>
+              <span class="send-button" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"/></svg></span>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="landing-section" id="features">

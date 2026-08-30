@@ -53,7 +53,7 @@ async function submitForm(event) {
       showError(message);
       return;
     }
-    window.location.href = "/";
+    window.location.href = mode === "signup" ? "/?onboarding=1" : "/";
   } catch (_) {
     showError("Apex AI could not be reached. Check the connection and try again.");
   } finally {

@@ -29,12 +29,17 @@
       <button class="new-chat-button" id="newChatButton">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         <span>New chat</span>
+      </button>
+
+      <button class="palette-trigger" id="openPaletteButton" type="button" aria-label="Search everything and run commands">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+        <span>Search or run a command</span>
         <kbd>⌘ K</kbd>
       </button>
 
       <div class="conversation-search">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
-        <input id="conversationSearch" type="search" placeholder="Search conversations" aria-label="Search conversations" autocomplete="off">
+        <input id="conversationSearch" type="search" placeholder="Filter conversations" aria-label="Filter conversations" autocomplete="off">
         <span class="search-shortcut">⌘ F</span>
       </div>
 
@@ -54,6 +59,11 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H10l2 2h5.5A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z"/></svg>
           <span>Documents</span>
           <span class="nav-badge" id="documentCount">0</span>
+        </button>
+        <button class="sidebar-link" data-view="knowledge">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V4H6.5A2.5 2.5 0 0 0 4 6.5z"/></svg>
+          <span>Knowledge</span>
+          <span class="nav-badge" id="knowledgeCount">0</span>
         </button>
         <button class="sidebar-link" data-view="settings">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.38.34.72.64.98.3.25.68.4 1.06.42h.1v4h-.1A1.7 1.7 0 0 0 19.4 15z"/></svg>
@@ -149,6 +159,13 @@
         </div>
       </section>
 
+      <section class="view page-view" id="knowledgeView" aria-label="Knowledge">
+        <div class="page-container">
+          <div class="page-heading"><div><span class="eyebrow">KNOWLEDGE BASES</span><h1>Knowledge</h1><p>Organize documents into named knowledge bases you can scope a conversation to.</p></div><button class="primary-button" id="newKnowledgeBaseButton"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New knowledge base</button></div>
+          <div class="knowledge-grid" id="knowledgeGrid"></div>
+        </div>
+      </section>
+
       <section class="view page-view" id="settingsView" aria-label="Settings">
         <div class="page-container settings-container">
           <div class="page-heading"><div><span class="eyebrow">PREFERENCES</span><h1>Settings</h1><p>Personalize the interface without changing your RAG or LLM backend.</p></div></div>
@@ -158,6 +175,8 @@
           <div class="settings-section"><div class="settings-copy"><h2>AI backend</h2><p>Live details from the existing Apex AI runtime.</p></div><div class="backend-card" id="backendDetails"><div class="skeleton-line"></div><div class="skeleton-line short"></div></div></div>
           <div class="settings-section"><div class="settings-copy"><h2>Memory</h2><p>Preferences and context you approved (Remember) from chat. Not used as document evidence.</p></div><div class="memory-list" id="memoryList"><div class="skeleton-line"></div></div><div class="setting-controls"><button class="danger-outline" id="clearAllMemories">Clear all memory</button></div></div>
           <div class="settings-section"><div class="settings-copy"><h2>Local data</h2><p>Conversation history and indexed documents remain on this machine.</p></div><div class="setting-controls"><button class="danger-outline" id="deleteAllConversations">Delete all conversations</button><small class="destructive-note">This does not delete your indexed documents.</small></div></div>
+          <div class="settings-section"><div class="settings-copy"><h2>Plan</h2><p>Your current plan and its real, enforced limits.</p></div><div class="plan-grid" id="planGrid"><div class="skeleton-line"></div></div></div>
+          <div class="settings-section"><div class="settings-copy"><h2>Usage</h2><p>Live counts against this month's plan limits.</p></div><div class="usage-list" id="usageList"><div class="skeleton-line"></div></div></div>
         </div>
       </section>
     </main>
@@ -173,5 +192,22 @@
   <input id="fileInput" type="file" multiple accept=".pdf,.txt,.md,.markdown,.json" hidden>
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
   <div class="confirm-modal" id="confirmModal" aria-hidden="true"><div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="confirmTitle"><div class="modal-icon"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z"/></svg></div><h2 id="confirmTitle">Are you sure?</h2><p id="confirmText"></p><div class="modal-actions"><button class="quiet-button" id="confirmCancel">Cancel</button><button class="danger-button" id="confirmAccept">Delete</button></div></div></div>
+
+  <div class="palette-backdrop" id="paletteBackdrop" aria-hidden="true">
+    <div class="command-palette" role="dialog" aria-modal="true" aria-label="Search and commands">
+      <div class="palette-input-row">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+        <input id="paletteInput" type="text" placeholder="Search conversations, documents, projects…" aria-label="Search everything and run commands" autocomplete="off">
+        <kbd>Esc</kbd>
+      </div>
+      <div class="palette-results" id="paletteResults"></div>
+    </div>
+  </div>
+
+  <div class="palette-backdrop" id="onboardingBackdrop" aria-hidden="true">
+    <div class="command-palette onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
+      <div class="onboarding-body" id="onboardingBody"></div>
+    </div>
+  </div>
 </body>
 </html>

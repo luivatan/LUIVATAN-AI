@@ -19,6 +19,11 @@ const state = {
   activeCollectionId: null,
   // Phase 71: project workspaces (name, instructions, a linked collection).
   projects: [],
+  // Unfiltered document list, refreshed on relevant view navigation/mutation
+  // - used only to compute real per-collection/per-project counts client
+  // side (Knowledge cards, Project cards, the command palette). Never a
+  // second source of truth: the Documents page itself always re-fetches.
+  allDocuments: [],
   preferences: {
     theme: localStorage.getItem("apex.theme") || "system",
     enterToSend: localStorage.getItem("apex.enterToSend") !== "false",
@@ -353,8 +358,9 @@ function showView(name) {
   if (name === "chat") { $("#topbarTitle").textContent = state.currentConversation?.title || "New conversation"; syncConversationCollectionSelect(); syncConversationProjectSelect(); }
   else $("#topbarTitle").textContent = name[0].toUpperCase() + name.slice(1);
   if (name === "documents") loadDocuments();
-  if (name === "projects") loadProjects();
-  if (name === "settings") { loadMemories(); loadAccount(); }
+  if (name === "knowledge") loadKnowledge();
+  if (name === "projects") loadDocumentCounts().then(loadProjects);
+  if (name === "settings") { loadMemories(); loadAccount(); loadBilling(); }
   closeMobileSidebar();
 }
 
@@ -794,6 +800,7 @@ async function uploadDocumentPage(files) {
   queueFiles(files);
   const success = await uploadPendingFiles();
   if (success) { await loadDocuments(); await loadConfig(); }
+  return success;
 }
 
 async function loadDocuments() {
@@ -838,6 +845,7 @@ async function deleteDocument(document) {
 async function loadCollections() {
   try { state.collections = await api("/collections"); }
   catch (_) { state.collections = []; }
+  $("#knowledgeCount").textContent = state.collections.length;
   renderCollectionFilterRow();
   renderConversationCollectionOptions();
 }
@@ -884,15 +892,19 @@ async function createCollection() {
   try {
     const created = await api("/collections", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
     await loadCollections();
-    state.activeCollectionId = created.id; renderCollectionFilterRow(); loadDocuments();
+    if (state.currentView === "knowledge") { await loadDocumentCounts(); renderKnowledgeGrid(); }
+    else { state.activeCollectionId = created.id; renderCollectionFilterRow(); loadDocuments(); }
   } catch (error) { toast(errorMessage(error), "error"); }
 }
 
 async function renameCollection(collection) {
   const name = prompt("Rename collection", collection.name);
   if (!name || !name.trim() || name.trim() === collection.name) return;
-  try { await api(`/collections/${collection.id}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) }); await loadCollections(); }
-  catch (error) { toast(errorMessage(error), "error"); }
+  try {
+    await api(`/collections/${collection.id}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) });
+    await loadCollections();
+    if (state.currentView === "knowledge") renderKnowledgeGrid();
+  } catch (error) { toast(errorMessage(error), "error"); }
 }
 
 async function deleteCollectionAction(collection) {
@@ -901,7 +913,9 @@ async function deleteCollectionAction(collection) {
   try {
     await api(`/collections/${collection.id}`, { method: "DELETE" });
     if (state.activeCollectionId === collection.id) state.activeCollectionId = null;
-    await loadCollections(); await loadDocuments();
+    await loadCollections();
+    if (state.currentView === "knowledge") { await loadDocumentCounts(); renderKnowledgeGrid(); }
+    else await loadDocuments();
     toast(`${collection.name} deleted.`, "success");
   } catch (error) { toast(errorMessage(error), "error"); }
 }
@@ -923,6 +937,54 @@ async function changeConversationCollection(collectionId) {
     const updated = await api(`/conversations/${state.currentConversation.id}/collection`, { method: "PATCH", body: JSON.stringify({ collection_id: collectionId || null }) });
     state.currentConversation = { ...state.currentConversation, ...updated };
   } catch (error) { toast(errorMessage(error), "error"); syncConversationCollectionSelect(); }
+}
+
+// ---------------- document counts (real, used by Knowledge + Projects) ------
+
+async function loadDocumentCounts() {
+  try { state.allDocuments = await api("/documents"); }
+  catch (_) { /* keep the previous snapshot rather than zeroing real counts out */ }
+}
+
+function documentCountByCollection() {
+  const counts = new Map();
+  state.allDocuments.forEach(doc => {
+    const key = doc.collection_id || "";
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return counts;
+}
+
+// ---------------- knowledge (dedicated collections page) --------------------
+
+async function loadKnowledge() {
+  await Promise.all([loadCollections(), loadDocumentCounts()]);
+  renderKnowledgeGrid();
+}
+
+function openKnowledgeBase(collectionId) {
+  state.activeCollectionId = collectionId;
+  showView("documents");
+}
+
+function renderKnowledgeGrid() {
+  const grid = $("#knowledgeGrid"); if (!grid) return;
+  grid.replaceChildren();
+  if (!state.collections.length) {
+    grid.innerHTML = '<div class="knowledge-empty"><div><strong>No knowledge bases yet</strong>Create one to organize documents Apex AI can retrieve and cite.</div></div>';
+    return;
+  }
+  const counts = documentCountByCollection();
+  state.collections.forEach(collection => {
+    const card = document.createElement("button");
+    card.type = "button"; card.className = "knowledge-card";
+    const count = counts.get(collection.id) || 0;
+    card.innerHTML = `<div class="knowledge-card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V4H6.5A2.5 2.5 0 0 0 4 6.5z"/></svg></div><h3></h3><div class="project-meta"><span><b>${count}</b> document${count === 1 ? "" : "s"}</span><span>Updated <b class="knowledge-card-updated"></b></span></div>`;
+    $("h3", card).textContent = collection.name;
+    $(".knowledge-card-updated", card).textContent = formatDate(collection.updated_at);
+    card.addEventListener("click", () => openKnowledgeBase(collection.id));
+    grid.append(card);
+  });
 }
 
 // ---------------- projects (Phase 71/72) ----------------
@@ -949,9 +1011,15 @@ function renderProjectList() {
     list.innerHTML = '<div class="project-empty"><div><strong>No projects yet</strong>Create one to group conversations under shared instructions and a knowledge base.</div></div>';
     return;
   }
+  const documentCounts = documentCountByCollection();
   state.projects.forEach(project => {
     const card = document.createElement("div"); card.className = "project-card"; card.dataset.projectId = project.id;
-    card.innerHTML = `<div class="project-card-header"><h3></h3><div class="project-actions"><button class="rename-project" title="Rename project">${icons.edit}</button><button class="delete-project" title="Delete project">${icons.trash}</button></div></div><label class="project-field"><span>Instructions</span><textarea class="project-instructions-input" placeholder="e.g. Always cite page numbers. Answer in a formal tone."></textarea></label><label class="project-field"><span>Knowledge base</span><select class="project-collection-select" aria-label="Linked collection"></select></label><button class="quiet-button start-project-chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New chat</button>`;
+    const conversationCount = state.conversations.filter(c => c.project_id === project.id).length;
+    const documentCount = project.collection_id ? (documentCounts.get(project.collection_id) || 0) : 0;
+    const latest = state.conversations
+      .filter(c => c.project_id === project.id)
+      .reduce((max, c) => (!max || c.updated_at > max ? c.updated_at : max), project.updated_at);
+    card.innerHTML = `<div class="project-card-header"><h3></h3><div class="project-actions"><button class="rename-project" title="Rename project">${icons.edit}</button><button class="delete-project" title="Delete project">${icons.trash}</button></div></div><div class="project-meta"><span><b>${conversationCount}</b> conversation${conversationCount === 1 ? "" : "s"}</span><span><b>${documentCount}</b> document${documentCount === 1 ? "" : "s"}</span><span>Updated <b>${escapeHTML(formatDate(latest))}</b></span></div><label class="project-field"><span>Instructions</span><textarea class="project-instructions-input" placeholder="e.g. Always cite page numbers. Answer in a formal tone."></textarea></label><label class="project-field"><span>Knowledge base</span><select class="project-collection-select" aria-label="Linked collection"></select></label><button class="quiet-button start-project-chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New chat</button>`;
     $("h3", card).textContent = project.name;
     const instructions = $(".project-instructions-input", card);
     instructions.value = project.instructions || "";
@@ -1051,6 +1119,173 @@ async function changeConversationProject(projectId) {
   } catch (error) { toast(errorMessage(error), "error"); syncConversationProjectSelect(); }
 }
 
+// ---------------- first-run onboarding ----------------------------------------
+// Shown only right after a real signup (login.js redirects new accounts to
+// "/?onboarding=1"; a returning login never carries that flag). Every step is
+// skippable, and the only writes this makes are real ones: a real POST
+// /projects if the user names a workspace, a real document upload through the
+// same upload path used everywhere else. The persona choice itself is a
+// client-side-only preference (localStorage) that tailors nothing on the
+// server - there is no backend field for it, so it is never sent as if it
+// were real account data.
+
+const onboardingState = { step: 1, persona: null };
+
+function personaOptions() {
+  return [
+    { id: "personal", label: "Personal", icon: paletteIcons.chat },
+    { id: "business", label: "Business", icon: paletteIcons.folder },
+    { id: "development", label: "Development", icon: paletteIcons.gear },
+    { id: "research", label: "Research", icon: paletteIcons.doc },
+    { id: "education", label: "Education", icon: paletteIcons.knowledge },
+  ];
+}
+
+function onboardingProgressDots() {
+  return `<div class="onboarding-progress">${[1, 2, 3].map(n => `<span class="${n === onboardingState.step ? "active" : ""}"></span>`).join("")}</div>`;
+}
+
+function renderOnboardingStep() {
+  const body = $("#onboardingBody");
+  if (onboardingState.step === 1) {
+    body.innerHTML = `${onboardingProgressDots()}<div class="onboarding-mark"><span>A</span></div><h2 id="onboardingTitle">What will you use Apex AI for?</h2><p>This only tailors your starting suggestions on this device - nothing is sent anywhere.</p><div class="onboarding-options">${personaOptions().map(p => `<button type="button" class="onboarding-option" data-persona="${p.id}">${p.icon}<span></span></button>`).join("")}</div><div class="onboarding-actions"><button class="primary-button" id="onboardingNext" disabled>Continue</button></div><button class="onboarding-skip" id="onboardingSkip">Skip setup</button>`;
+    $$(".onboarding-option", body).forEach((button, index) => { $("span", button).textContent = personaOptions()[index].label; });
+    $$(".onboarding-option", body).forEach(button => button.addEventListener("click", () => {
+      $$(".onboarding-option", body).forEach(other => other.classList.remove("selected"));
+      button.classList.add("selected");
+      onboardingState.persona = button.dataset.persona;
+      $("#onboardingNext").disabled = false;
+    }));
+    $("#onboardingNext").addEventListener("click", () => {
+      if (onboardingState.persona) localStorage.setItem("apex.persona", onboardingState.persona);
+      onboardingState.step = 2; renderOnboardingStep();
+    });
+    $("#onboardingSkip").addEventListener("click", finishOnboarding);
+  } else if (onboardingState.step === 2) {
+    body.innerHTML = `${onboardingProgressDots()}<h2 id="onboardingTitle">Create your first workspace.</h2><p>A project groups conversations under shared instructions and a knowledge base. You can always create one later.</p><input type="text" class="onboarding-input" id="onboardingProjectName" placeholder="e.g. Research, Client work, Personal" maxlength="80"><div class="onboarding-actions"><button class="quiet-button" id="onboardingBack">Back</button><button class="primary-button" id="onboardingNext">Create &amp; continue</button></div><button class="onboarding-skip" id="onboardingSkip">Skip</button>`;
+    $("#onboardingBack").addEventListener("click", () => { onboardingState.step = 1; renderOnboardingStep(); });
+    $("#onboardingNext").addEventListener("click", async () => {
+      const name = $("#onboardingProjectName").value.trim();
+      if (name) {
+        const button = $("#onboardingNext"); button.disabled = true;
+        try { await api("/projects", { method: "POST", body: JSON.stringify({ name }) }); await loadProjects(); toast(`"${name}" created.`, "success"); }
+        catch (error) { toast(errorMessage(error), "error"); button.disabled = false; return; }
+      }
+      onboardingState.step = 3; renderOnboardingStep();
+    });
+    $("#onboardingSkip").addEventListener("click", () => { onboardingState.step = 3; renderOnboardingStep(); });
+  } else {
+    body.innerHTML = `${onboardingProgressDots()}<h2 id="onboardingTitle">Upload your first document.</h2><p>Give Apex AI something real to answer questions from - grounded, with citations back to the exact page.</p><div class="onboarding-actions"><button class="quiet-button" id="onboardingBack">Back</button><button class="primary-button" id="onboardingUpload">Choose a file</button></div><button class="onboarding-skip" id="onboardingSkip">Finish without uploading</button>`;
+    $("#onboardingBack").addEventListener("click", () => { onboardingState.step = 2; renderOnboardingStep(); });
+    $("#onboardingUpload").addEventListener("click", () => {
+      $("#fileInput").dataset.mode = "documents"; $("#fileInput").dataset.onboarding = "1"; $("#fileInput").click();
+    });
+    $("#onboardingSkip").addEventListener("click", finishOnboarding);
+  }
+}
+
+function finishOnboarding() {
+  localStorage.setItem("apex.onboarded", "true");
+  $("#onboardingBackdrop").classList.remove("open"); $("#onboardingBackdrop").setAttribute("aria-hidden", "true");
+}
+
+function maybeStartOnboarding() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("onboarding") !== "1") return;
+  history.replaceState({}, "", window.location.pathname);
+  if (localStorage.getItem("apex.onboarded") === "true") return;
+  onboardingState.step = 1; onboardingState.persona = null;
+  renderOnboardingStep();
+  $("#onboardingBackdrop").classList.add("open"); $("#onboardingBackdrop").setAttribute("aria-hidden", "false");
+}
+
+// ---------------- command palette (⌘K / Ctrl+K) ------------------------------
+// Every result comes from already-loaded, real application state
+// (state.conversations/state.allDocuments/state.projects/state.collections)
+// or triggers a real action - there is no static/fake command list beyond
+// the fixed navigation shortcuts, which are real UI actions, not data.
+
+const paletteIcons = {
+  chat: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v12H7l-3 3z"/></svg>',
+  doc: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l4 4v16H6zM14 2v5h5"/></svg>',
+  folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  knowledge: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V4H6.5A2.5 2.5 0 0 0 4 6.5z"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.38.34.72.64.98.3.25.68.4 1.06.42h.1v4h-.1A1.7 1.7 0 0 0 19.4 15z"/></svg>',
+  theme: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+};
+
+function paletteActions() {
+  return [
+    { label: "New chat", icon: paletteIcons.plus, run: newChat },
+    { label: "New project", icon: paletteIcons.plus, run: createProject },
+    { label: "New knowledge base", icon: paletteIcons.plus, run: createCollection },
+    { label: "Open Documents", icon: paletteIcons.doc, run: () => showView("documents") },
+    { label: "Open Knowledge", icon: paletteIcons.knowledge, run: () => showView("knowledge") },
+    { label: "Open Projects", icon: paletteIcons.folder, run: () => showView("projects") },
+    { label: "Open Settings", icon: paletteIcons.gear, run: () => showView("settings") },
+    { label: "Toggle theme", icon: paletteIcons.theme, run: () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark") },
+  ];
+}
+
+function paletteItem(icon, label, meta, onSelect) {
+  const button = document.createElement("button");
+  button.type = "button"; button.className = "palette-item";
+  button.innerHTML = `${icon}<span></span>${meta ? `<small>${escapeHTML(meta)}</small>` : ""}`;
+  $("span", button).textContent = label;
+  button.addEventListener("click", onSelect);
+  return button;
+}
+
+function renderPaletteResults(query) {
+  const results = $("#paletteResults"); results.replaceChildren();
+  const q = query.trim().toLowerCase();
+  const select = fn => { closePalette(); fn(); };
+
+  if (!q) {
+    const label = document.createElement("div"); label.className = "palette-group-label"; label.textContent = "Actions";
+    results.append(label);
+    paletteActions().forEach(action => results.append(paletteItem(action.icon, action.label, "", () => select(action.run))));
+    return;
+  }
+
+  const groups = [
+    { name: "Actions", items: paletteActions().filter(a => a.label.toLowerCase().includes(q)).map(a => ({ icon: a.icon, label: a.label, meta: "", onSelect: () => select(a.run) })) },
+    { name: "Conversations", items: state.conversations.filter(c => c.title.toLowerCase().includes(q)).slice(0, 6).map(c => ({ icon: paletteIcons.chat, label: c.title, meta: "", onSelect: () => select(() => openConversation(c.id)) })) },
+    { name: "Documents", items: state.allDocuments.filter(d => d.name.toLowerCase().includes(q)).slice(0, 6).map(d => ({ icon: paletteIcons.doc, label: d.name, meta: "", onSelect: () => select(() => openKnowledgeBase(d.collection_id || "")) })) },
+    { name: "Projects", items: state.projects.filter(p => p.name.toLowerCase().includes(q)).slice(0, 6).map(p => ({ icon: paletteIcons.folder, label: p.name, meta: "", onSelect: () => select(() => showView("projects")) })) },
+    { name: "Knowledge", items: state.collections.filter(c => c.name.toLowerCase().includes(q)).slice(0, 6).map(c => ({ icon: paletteIcons.knowledge, label: c.name, meta: "", onSelect: () => select(() => openKnowledgeBase(c.id)) })) },
+  ].filter(group => group.items.length);
+
+  if (!groups.length) { results.innerHTML = '<div class="palette-empty">No matches. Try a different search.</div>'; return; }
+  groups.forEach(group => {
+    const label = document.createElement("div"); label.className = "palette-group-label"; label.textContent = group.name;
+    results.append(label);
+    group.items.forEach(item => results.append(paletteItem(item.icon, item.label, item.meta, item.onSelect)));
+  });
+}
+
+function paletteMoveSelection(delta) {
+  const items = $$(".palette-item", $("#paletteResults"));
+  if (!items.length) return;
+  let index = items.findIndex(item => item.classList.contains("active"));
+  items.forEach(item => item.classList.remove("active"));
+  index = (index + delta + items.length) % items.length;
+  items[index].classList.add("active");
+  items[index].scrollIntoView({ block: "nearest" });
+}
+
+function openPalette() {
+  $("#paletteBackdrop").classList.add("open"); $("#paletteBackdrop").setAttribute("aria-hidden", "false");
+  $("#paletteInput").value = "";
+  renderPaletteResults("");
+  loadDocumentCounts().then(() => { if ($("#paletteBackdrop").classList.contains("open")) renderPaletteResults($("#paletteInput").value); });
+  setTimeout(() => $("#paletteInput").focus(), 20);
+}
+function closePalette() {
+  $("#paletteBackdrop").classList.remove("open"); $("#paletteBackdrop").setAttribute("aria-hidden", "true");
+}
+
 function confirmAction(title, text, actionLabel) {
   return new Promise(resolve => {
     const modal = $("#confirmModal"); $("#confirmTitle").textContent = title; $("#confirmText").textContent = text; $("#confirmAccept").textContent = actionLabel;
@@ -1076,6 +1311,56 @@ async function loadAccount() {
 async function signOut() {
   try { await api("/auth/logout", { method: "POST" }); } catch (_) { /* proceed to /login regardless */ }
   window.location.href = "/login";
+}
+
+const USAGE_LABELS = {
+  documents: "Documents", storage_mb: "Storage", collections: "Knowledge bases",
+  projects: "Projects", messages: "Messages this month", tool_calls: "Tool calls this month",
+};
+
+function formatUsageValue(resource, value) {
+  if (resource === "storage_mb") return value >= 1000 ? `${(value / 1000).toFixed(1)} GB` : `${value} MB`;
+  return String(value);
+}
+
+async function loadBilling() {
+  const planGrid = $("#planGrid"); const usageList = $("#usageList");
+  try {
+    const [plans, usage] = await Promise.all([api("/billing/plans"), api("/billing/usage")]);
+    const currentPlanId = usage.subscription.plan.id;
+
+    planGrid.replaceChildren();
+    plans.forEach(plan => {
+      const card = document.createElement("div");
+      card.className = `settings-plan-card${plan.id === currentPlanId ? " current" : ""}`;
+      const price = plan.price_cents === 0 ? "Free" : `$${(plan.price_cents / 100).toFixed(plan.price_cents % 100 ? 2 : 0)}`;
+      card.innerHTML = `<b></b><span class="plan-card-price"></span><span>${plan.id === currentPlanId ? "Current plan" : ""}</span>`;
+      $("b", card).textContent = plan.name;
+      $(".plan-card-price", card).textContent = plan.price_cents === 0 ? price : `${price}/mo`;
+      planGrid.append(card);
+    });
+
+    usageList.replaceChildren();
+    if (!usage.entitlements.length) {
+      usageList.innerHTML = '<div class="memory-empty">Usage data is unavailable right now.</div>';
+      return;
+    }
+    usage.entitlements.forEach(item => {
+      const row = document.createElement("div"); row.className = "usage-row";
+      const percent = item.limit ? Math.min(100, Math.round((item.used / item.limit) * 100)) : Math.min(100, item.used > 0 ? 8 : 0);
+      const tone = item.limit == null ? "" : percent >= 100 ? "full" : percent >= 80 ? "warning" : "";
+      const limitLabel = item.limit == null ? "Unlimited" : formatUsageValue(item.resource, item.limit);
+      // .style.width (CSSOM property assignment, not an inline style="" markup
+      // attribute) is used here deliberately - the app's CSP (style-src 'self',
+      // no unsafe-inline) blocks inline style attributes but not this form.
+      row.innerHTML = `<span><span>${escapeHTML(USAGE_LABELS[item.resource] || item.resource)}</span><b>${escapeHTML(formatUsageValue(item.resource, item.used))} / ${escapeHTML(limitLabel)}</b></span><div class="usage-track"><div class="usage-fill ${tone}"></div></div>`;
+      $(".usage-fill", row).style.width = `${item.limit == null ? 4 : percent}%`;
+      usageList.append(row);
+    });
+  } catch (error) {
+    planGrid.innerHTML = `<div class="error-message">${escapeHTML(errorMessage(error))}</div>`;
+    usageList.innerHTML = "";
+  }
 }
 
 async function loadMemories() {
@@ -1124,6 +1409,7 @@ function bindEvents() {
   $("#conversationCollection").addEventListener("change", event => changeConversationCollection(event.target.value));
   $("#conversationProject").addEventListener("change", event => changeConversationProject(event.target.value));
   $("#newProjectButton").addEventListener("click", createProject);
+  $("#newKnowledgeBaseButton").addEventListener("click", createCollection);
   $("#messageInput").addEventListener("input", () => { autoResizeComposer(); updateSendState(); });
   $("#messageInput").addEventListener("keydown", event => { if (event.key === "Enter" && !event.shiftKey && state.preferences.enterToSend) { event.preventDefault(); sendMessage(); } });
   $("#sendButton").addEventListener("click", () => sendMessage());
@@ -1131,7 +1417,13 @@ function bindEvents() {
   $("#pageUploadButton").addEventListener("click", () => { $("#fileInput").dataset.mode = "documents"; $("#fileInput").click(); });
   $("#documentDropZone").addEventListener("click", () => { $("#fileInput").dataset.mode = "documents"; $("#fileInput").click(); });
   $("#documentDropZone").addEventListener("keydown", event => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); $("#pageUploadButton").click(); } });
-  $("#fileInput").addEventListener("change", event => { const files = [...event.target.files]; event.target.value = ""; if (event.target.dataset.mode === "documents") uploadDocumentPage(files); else queueFiles(files); });
+  $("#fileInput").addEventListener("change", event => {
+    const files = [...event.target.files]; event.target.value = "";
+    const isOnboarding = event.target.dataset.onboarding === "1"; delete event.target.dataset.onboarding;
+    if (event.target.dataset.mode === "documents") {
+      uploadDocumentPage(files).then(success => { if (isOnboarding && files.length && success) finishOnboarding(); });
+    } else queueFiles(files);
+  });
   $("#refreshDocuments").addEventListener("click", loadDocuments); $("#closeSource").addEventListener("click", closeSource);
   $("#deleteAllConversations").addEventListener("click", deleteAllConversations);
   $("#clearAllMemories").addEventListener("click", clearAllMemories);
@@ -1139,10 +1431,20 @@ function bindEvents() {
   $("#enterToSend").checked = state.preferences.enterToSend; $("#autoScroll").checked = state.preferences.autoScroll; $("#useMemory").checked = state.preferences.useMemory;
   [["enterToSend", "enterToSend"], ["autoScroll", "autoScroll"], ["useMemory", "useMemory"]].forEach(([id, key]) => $("#" + id).addEventListener("change", event => { state.preferences[key] = event.target.checked; localStorage.setItem(`apex.${key}`, String(event.target.checked)); }));
   let searchTimer; $("#conversationSearch").addEventListener("input", event => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadConversations(event.target.value), 180); });
+
+  $("#openPaletteButton").addEventListener("click", openPalette);
+  $("#paletteBackdrop").addEventListener("click", event => { if (event.target === $("#paletteBackdrop")) closePalette(); });
+  $("#paletteInput").addEventListener("input", event => renderPaletteResults(event.target.value));
+  $("#paletteInput").addEventListener("keydown", event => {
+    if (event.key === "ArrowDown") { event.preventDefault(); paletteMoveSelection(1); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); paletteMoveSelection(-1); }
+    else if (event.key === "Enter") { event.preventDefault(); const active = $(".palette-item.active", $("#paletteResults")) || $(".palette-item", $("#paletteResults")); active?.click(); }
+  });
+
   document.addEventListener("keydown", event => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); newChat(); }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); openPalette(); }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) { event.preventDefault(); openMobileSidebar(); $("#conversationSearch").focus(); }
-    if (event.key === "Escape") { closeSource(); closeMobileSidebar(); }
+    if (event.key === "Escape") { closePalette(); closeSource(); closeMobileSidebar(); }
   });
   $("#messages").addEventListener("click", event => { const button = event.target.closest(".code-copy"); if (!button) return; const code = $("code", button.closest(".code-block")).textContent; navigator.clipboard.writeText(code).then(() => { $("span", button).textContent = "Copied"; setTimeout(() => $("span", button).textContent = "Copy code", 1200); }); });
 
@@ -1165,6 +1467,7 @@ async function initialize() {
     loadMemoryCandidates(),
   ]);
   await loadModels();
+  maybeStartOnboarding();
 }
 
 document.addEventListener("DOMContentLoaded", initialize);

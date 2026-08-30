@@ -1,6 +1,11 @@
 /* Apex AI public landing page (Phase 96). Relies on app.css's :root tokens
-   and shared button/brand classes; only landing-specific layout lives here. */
-
+   and shared button/brand classes; only landing-specific layout lives here.
+   app.css's global reset fixes html/body at height:100% with overflow:hidden
+   for the app shell's absolute-positioned SPA layout - correct there, but it
+   would leave this normally-flowing, scrolling marketing page unreachable
+   past the first viewport height in a real browser. Restore normal document
+   scrolling for this page specifically. */
+html, body { height: auto; min-height: 100%; overflow: visible; }
 body { background: var(--bg); color: var(--text); margin: 0; }
 
 .landing-nav {
@@ -24,6 +29,43 @@ body { background: var(--bg); color: var(--text); margin: 0; }
 .landing-subtext { color: var(--text-2); font-size: 15.5px; line-height: 1.65; max-width: 620px; margin: 0 auto; }
 .landing-cta-row { display: flex; justify-content: center; gap: 12px; margin-top: 32px; flex-wrap: wrap; }
 .landing-cta { text-decoration: none; padding: 0 22px; font-size: 14px; }
+
+/* Hero product preview - built from the real app's own component classes
+   (brand-mark, new-chat-button, sidebar-link, suggestion, composer,
+   send-button, composer-icon - all defined in app.css, loaded on this page)
+   rather than a screenshot image. Purely decorative: aria-hidden, and every
+   piece is a plain span/div rather than a real input/button, so it never
+   pretends to be a working control. */
+.landing-preview { margin: 48px auto 0; max-width: 900px; border: 1px solid var(--border-strong); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; text-align: left; }
+.landing-preview-topbar { display: flex; align-items: center; gap: 9px; height: 44px; padding: 0 16px; border-bottom: 1px solid var(--border); font-size: 12.5px; font-weight: 650; color: var(--text-2); }
+.landing-preview-topbar .brand-mark { width: 22px; height: 22px; border-radius: 7px; font-size: 11px; }
+.landing-preview-online { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--text-3); font-size: 11px; font-weight: 600; }
+.landing-preview-online i { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(70,211,154,.15); }
+.landing-preview-body { display: grid; grid-template-columns: 190px 1fr; min-height: 340px; }
+.landing-preview-sidebar { border-right: 1px solid var(--border); background: var(--sidebar); padding: 14px 10px; display: flex; flex-direction: column; gap: 14px; }
+.landing-preview-sidebar .new-chat-button { height: 36px; font-size: 12px; }
+.landing-preview-sidebar .new-chat-button svg { width: 15px; }
+.landing-preview-nav { display: flex; flex-direction: column; gap: 2px; }
+.landing-preview-nav .sidebar-link { height: 33px; font-size: 12px; pointer-events: none; }
+.landing-preview-nav .sidebar-link svg { width: 15px; }
+.landing-preview-main { padding: 30px 26px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
+.landing-preview-heading { margin: 0; font-size: 19px; font-weight: 680; letter-spacing: -.02em; }
+.landing-preview-suggestions { width: 100%; max-width: 420px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.landing-preview-suggestions .suggestion { min-height: 0; padding: 10px 12px; pointer-events: none; grid-template-columns: 1fr; }
+.landing-preview-suggestions .suggestion span { font-size: 11.5px; font-weight: 600; }
+.landing-preview-composer { width: 100%; max-width: 460px; pointer-events: none; }
+.landing-preview-input { flex: 1; color: var(--text-3); font-size: 13px; }
+.landing-preview-composer .send-button { width: 34px; height: 34px; }
+.landing-preview-composer .send-button svg { width: 16px; }
+
+@media (max-width: 720px) {
+  .landing-preview-body { grid-template-columns: 1fr; }
+  .landing-preview-sidebar { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--border); }
+  .landing-preview-sidebar .new-chat-button { flex: 1 0 100%; }
+  .landing-preview-nav { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .landing-preview-nav .sidebar-link { width: auto; padding: 0 9px; }
+  .landing-preview-suggestions { grid-template-columns: 1fr; }
+}
 
 .landing-section { padding: 56px 0; border-top: 1px solid var(--border); }
 .landing-section h2 {
