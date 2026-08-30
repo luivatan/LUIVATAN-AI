@@ -64,6 +64,7 @@ class ApexServices:
     projects: Any = None
     tools: Any = None
     tool_executor: Any = None
+    model_router: Any = None
     _extras: dict = field(default_factory=dict)
 
     @property
@@ -122,6 +123,11 @@ def build_services(
         models=ModelManager(settings),
         memory_safety=memory_safety,
         memory_extractor=memory_extractor,
+    )
+    from apex_ai.models.router import ModelRouter
+
+    services.model_router = ModelRouter(
+        services.models, max_fast_model_mb=settings.max_fast_model_mb
     )
 
     # Phase 51/52: accounts/sessions are foundational, not optional like the

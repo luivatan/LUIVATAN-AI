@@ -127,6 +127,12 @@ class ModelSelectOut(BaseModel):
     selected: str
 
 
+class RecommendedModelOut(BaseModel):
+    task: str
+    reason: str
+    model: ModelEntryOut | None = None
+
+
 class IngestOut(BaseModel):
     status: str
     document_id: str
@@ -224,6 +230,7 @@ __all__ = [
     "ModelSelectOut",
     "ProjectOut",
     "QueryOut",
+    "RecommendedModelOut",
     "RejectMemoryOut",
     "RemovedOut",
     "StopOut",

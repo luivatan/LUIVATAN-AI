@@ -74,6 +74,10 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
 - **CSV/TSV ingestion** (Phase 78) — indexed the same way as any other document: each
   row becomes one searchable, citable paragraph, reusing the existing chunking/embedding/
   retrieval pipeline with no CSV-specific code downstream of extraction.
+- **Model routing** (Phase 79) — `GET /models/recommended?task=chat|fast` ranks
+  discovered local models by size (a real proxy for local inference latency) and an
+  optional configured ceiling (`APEX_MAX_FAST_MODEL_MB`); read-only, does not itself
+  change which model is loaded.
 - **Bounded conversation context** — newest complete turns are selected under configurable
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.
@@ -295,6 +299,7 @@ All configuration comes from environment variables or `.env` (see
 | `APEX_LLM_PROVIDER` | `llama_cpp` | `llama_cpp` / `ollama` / `openai` / `openai_compatible` / `transformers` |
 | `APEX_MODEL_PATH` | *(empty)* | exact GGUF file (or pick in UI) |
 | `APEX_MODEL_DIR` | `models` | directory scanned by the model manager |
+| `APEX_MAX_FAST_MODEL_MB` | *(empty = no ceiling)* | caps model size eligible for the router's "fast" task (`GET /models/recommended?task=fast`, Phase 79) |
 | `APEX_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | embedding model (independent of the LLM) |
 | `APEX_RERANKER` | `auto` | `auto` / `cross_encoder` / `lexical` / `off` |
 | `APEX_TOP_K` | `12` | fused hybrid candidate pool size |

@@ -180,6 +180,13 @@ class Settings:
     # deployment that genuinely serves a separate frontend origin.
     cors_allowed_origins: str = ""
 
+    # --- model routing (Phase 79) --------------------------------------------
+    # A ceiling on model file size for the router's "fast" task (a proxy for
+    # local inference latency - the only signal available without loading
+    # each candidate model). None (the default) means no ceiling; every
+    # loadable model is eligible, ranked purely by size.
+    max_fast_model_mb: float | None = None
+
     # --- server ------------------------------------------------------------
     # Loopback is the safe default; a wider bind plus real accounts (Phase 51+)
     # is a deliberate choice for a shared deployment, not the default posture.
@@ -237,6 +244,19 @@ def _bool(raw: str, default: bool) -> bool:
     if raw == "":
         return default
     return raw.strip().lower() in _TRUTHY
+
+
+def _optional_positive_float(raw: str) -> float | None:
+    """Empty or invalid -> None (no configured limit), never a silent 0."""
+    if raw == "":
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    if not math.isfinite(value) or value <= 0:
+        return None
+    return value
 
 
 def load_settings() -> Settings:
@@ -397,6 +417,9 @@ def load_settings() -> Settings:
             1, _int(_env("APEX_AUTH_RATE_LIMIT_PER_MINUTE", default="10"), 10)
         ),
         cors_allowed_origins=_env("APEX_CORS_ALLOWED_ORIGINS", default=""),
+        max_fast_model_mb=_optional_positive_float(
+            _env("APEX_MAX_FAST_MODEL_MB", default="")
+        ),
         server_name=_env("APEX_SERVER_NAME", default="127.0.0.1"),
         server_port=_bounded_int(
             _env("APEX_SERVER_PORT", default="7860"),

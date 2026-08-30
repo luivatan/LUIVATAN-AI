@@ -19,6 +19,11 @@ class ModelEntry:
     status: str
     active: bool
     loadable: bool
+    # Phase 79: the raw byte size ``size`` is formatted from - kept
+    # separately because routing decisions need to compare/sort by size,
+    # and re-parsing a human-readable string ("123.4 MB") back into a
+    # number is exactly the kind of fragile roundtrip this field avoids.
+    size_bytes: int = 0
 
     def row(self) -> list:
         return [
@@ -63,16 +68,18 @@ class ModelManager:
         entries = []
         for path in candidates:
             valid = self._is_gguf(path)
+            size_bytes = path.stat().st_size
             entries.append(
                 ModelEntry(
                     name=path.name,
                     path=path,
                     model_type="GGUF",
-                    size=human_size(path.stat().st_size),
+                    size=human_size(size_bytes),
                     provider="llama.cpp",
                     status="ready" if valid else "unknown format",
                     active=active == path,
                     loadable=valid,
+                    size_bytes=size_bytes,
                 )
             )
         return sorted(entries, key=lambda entry: entry.name.lower())

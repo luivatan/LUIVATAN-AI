@@ -15,6 +15,7 @@ def wired_services(settings, ingestion, embeddings, store):
     from apex_ai.auth.users import UserStore
     from apex_ai.memory.conversation import ConversationMemory
     from apex_ai.models.manager import ModelManager
+    from apex_ai.models.router import ModelRouter
     from apex_ai.rag.engine import RagEngine
     from apex_ai.rag.query_processing import QueryProcessor
     from apex_ai.retrieval.keyword import BM25Index
@@ -37,11 +38,13 @@ def wired_services(settings, ingestion, embeddings, store):
         query_processor=QueryProcessor(enabled=False),
         user_id=default_local_user.id,
     )
+    manager = ModelManager(settings)
     return ApexServices(
         settings=settings, embeddings=embeddings, store=store, ingestion=ingestion,
         retriever=retriever, reranker=LexicalReranker(), memory=memory,
         query_processor=QueryProcessor(enabled=False), engine=engine,
-        models=ModelManager(settings),
+        models=manager,
+        model_router=ModelRouter(manager, max_fast_model_mb=settings.max_fast_model_mb),
         auth=auth, default_local_user=default_local_user,
     )
 
@@ -310,6 +313,46 @@ def test_ingest_endpoint(api_client, tmp_path):
 
 def test_models_endpoint_lists_discovered(api_client):
     assert api_client.get("/models").status_code == 200
+
+
+def test_recommended_model_endpoint_reports_no_model_when_none_are_discovered(api_client):
+    """settings.model_dir has no real GGUF files in this fixture - a real,
+    honest "nothing to recommend" answer, not a fabricated one."""
+    response = api_client.get("/models/recommended")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["task"] == "chat"
+    assert payload["model"] is None
+    assert "No loadable model" in payload["reason"]
+
+
+def test_recommended_model_endpoint_picks_the_largest_model_for_chat(api_client, wired_services):
+    model_dir = wired_services.settings.model_dir
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "small.gguf").write_bytes(b"GGUF" + b"\x00" * 100)
+    (model_dir / "large.gguf").write_bytes(b"GGUF" + b"\x00" * 10_000)
+
+    response = api_client.get("/models/recommended", params={"task": "chat"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["model"]["name"] == "large.gguf"
+
+
+def test_recommended_model_endpoint_picks_the_smallest_model_for_fast(api_client, wired_services):
+    model_dir = wired_services.settings.model_dir
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "small.gguf").write_bytes(b"GGUF" + b"\x00" * 100)
+    (model_dir / "large.gguf").write_bytes(b"GGUF" + b"\x00" * 10_000)
+
+    response = api_client.get("/models/recommended", params={"task": "fast"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["model"]["name"] == "small.gguf"
+
+
+def test_recommended_model_endpoint_rejects_an_unknown_task(api_client):
+    response = api_client.get("/models/recommended", params={"task": "does-not-exist"})
+    assert response.status_code == 422
 
 
 def test_memory_confirmation_endpoint_degrades_when_optional_store_is_unavailable(

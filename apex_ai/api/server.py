@@ -18,7 +18,7 @@ from apex_ai import APP_NAME, __version__
 from apex_ai.api.auth import create_auth_router, make_require_user_dependency
 from apex_ai.api.chat import GenerationManager, create_chat_router
 from apex_ai.api.collections import create_collections_router
-from apex_ai.api.errors import install_error_handlers, service_not_ready_error
+from apex_ai.api.errors import APIError, install_error_handlers, service_not_ready_error
 from apex_ai.api.memory import create_memory_router
 from apex_ai.api.projects import create_projects_router
 from apex_ai.api.rate_limit import install_rate_limiting
@@ -31,6 +31,7 @@ from apex_ai.api.schemas import (
     ModelEntryOut,
     ModelSelectOut,
     QueryOut,
+    RecommendedModelOut,
     RemovedOut,
 )
 from apex_ai.api.uploads import create_upload_router
@@ -224,6 +225,21 @@ def create_api(
     def select_model(payload: ModelSelection):
         path = services.select_model(payload.name)
         return {"selected": path}
+
+    @app.get("/models/recommended", response_model=RecommendedModelOut)
+    def recommended_model(task: str = "chat"):
+        """Phase 79: which discovered model the router would pick for
+        ``task`` - read-only, does not select or load anything itself."""
+        if services.model_router is None:
+            raise APIError(503, "Model routing is unavailable.", code="model_router_unavailable")
+        try:
+            decision = services.model_router.select(task)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        entry = None
+        if decision.entry is not None:
+            entry = vars(decision.entry) | {"path": str(decision.entry.path)}
+        return {"task": decision.task, "reason": decision.reason, "model": entry}
 
     require_user = make_require_user_dependency(services)
 
