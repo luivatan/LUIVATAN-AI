@@ -96,6 +96,10 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   checked against the caller's plan before they happen, with a clear "upgrade to continue"
   (HTTP 402) response when a limit is hit. `GET /billing/usage` reports real live counts
   and recorded usage against every plan limit.
+- **Verified backup/restore** (Phase 92) — one archive per backup covers every SQLite
+  database (via SQLite's own online backup API), the vector store, uploads, and the JSON
+  registries, with a checksum manifest `--verify` proves is byte-for-byte restorable
+  before reporting success.
 - **Bounded conversation context** — newest complete turns are selected under configurable
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.
@@ -411,6 +415,35 @@ Documents can be attached from the composer, dropped anywhere on the chat, or ma
 from the Documents page. The browser upload route streams through a bounded staging
 area before handing the real file to this same ingestion pipeline. Documents can be
 listed, re-indexed, and deleted with their associated vectors.
+
+## Backups (Phase 92)
+
+```bash
+python scripts/backup.py --verify                        # data/backups/apex-backup-<timestamp>.tar.gz
+python scripts/restore.py path/to/apex-backup-*.tar.gz path/to/restored
+```
+
+One archive covers everything persistent: every SQLite database (users,
+conversations, long-term memory, collections, projects, billing), the
+Chroma vector store, the uploads directory, and the small JSON registries
+(document registry, conversation memory). SQLite files are copied through
+SQLite's own online backup API (`sqlite3.Connection.backup()`), safe
+against a database that's open elsewhere (e.g. WAL mode) at the moment of
+backup — a plain file copy could capture a torn, inconsistent snapshot.
+The Chroma/uploads directories are best-effort directory copies (no
+equivalent online-backup API exists for them), so a backup taken while
+the app is actively writing to them is not guaranteed point-in-time
+consistent — the same caveat any file-based backup has without a stronger
+snapshot mechanism underneath it.
+
+Every backup carries a manifest (path, SHA-256, size for each file).
+`--verify` immediately extracts the new archive into a scratch location
+and checks every checksum before reporting success — a backup is only
+reported as good once it's proven byte-for-byte restorable, not merely
+"the archive file exists." `scripts/restore.py` never overwrites an
+existing directory; it always extracts into a new location so you can
+inspect the result (or swap it into place yourself, after stopping the
+running application) rather than silently clobbering live data.
 
 ## Evaluation
 
