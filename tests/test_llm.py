@@ -139,6 +139,88 @@ def test_openai_provider_requires_key(settings):
         provider.validate()
 
 
+def test_openai_provider_generate_with_tools_returns_tool_calls(settings, monkeypatch):
+    """Phase 73: a real (mocked HTTP) round trip through the OpenAI
+    /chat/completions `tools` param, proving the response is parsed into
+    ToolCall objects rather than simulated."""
+    from apex_ai.llm.openai_compat import OpenAICompatProvider
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-1",
+                                    "function": {
+                                        "name": "calculator",
+                                        "arguments": '{"expression": "2 + 2"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+
+    seen_payloads = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen_payloads.append(json)
+        return Response()
+
+    monkeypatch.setattr("requests.post", fake_post)
+    provider = OpenAICompatProvider(with_overrides(settings, openai_api_key="configured"))
+    assert provider.supports_tools is True
+
+    result = provider.generate_with_tools(
+        [{"role": "user", "content": "what is 2 + 2?"}],
+        tools=[{"type": "function", "function": {"name": "calculator", "parameters": {}}}],
+    )
+
+    assert result.content is None
+    assert len(result.tool_calls) == 1
+    call = result.tool_calls[0]
+    assert call.id == "call-1"
+    assert call.name == "calculator"
+    assert call.arguments_json == '{"expression": "2 + 2"}'
+    assert seen_payloads[0]["tools"] == [
+        {"type": "function", "function": {"name": "calculator", "parameters": {}}}
+    ]
+
+
+def test_openai_provider_generate_with_tools_returns_plain_content_when_no_tool_is_called(
+    settings, monkeypatch
+):
+    from apex_ai.llm.openai_compat import OpenAICompatProvider
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "The answer is 4."}}]}
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    provider = OpenAICompatProvider(with_overrides(settings, openai_api_key="configured"))
+
+    result = provider.generate_with_tools(
+        [{"role": "user", "content": "what is 2 + 2?"}], tools=[]
+    )
+    assert result.content == "The answer is 4."
+    assert result.tool_calls == ()
+
+
 def test_provider_cache_tracks_api_key_without_retaining_plaintext(settings):
     from apex_ai.llm.registry import _cache_key
 

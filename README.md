@@ -56,6 +56,10 @@ PDF/TXT/MD/JSON → DOCUMENT PROCESSOR → SMART CHUNKING → METADATA
   instructions, and a linked collection; a project's instructions are woven into every
   prompt in its conversations as clearly separated, never-cited guidance, and its linked
   collection governs retrieval the same way a standalone collection does.
+- **Tool-calling abstraction** (Phase 73) — a safe, bounded `ToolRegistry` execution
+  boundary and an opt-in `LLMProvider.generate_with_tools()` capability (real for the
+  OpenAI-compatible provider; every other provider honestly reports no support rather
+  than simulating one). Not yet wired into live chat — see `docs/PHASE73_TOOL_ARCHITECTURE.md`.
 - **Bounded conversation context** — newest complete turns are selected under configurable
   turn, total-character, and per-message limits. History helps resolve follow-ups but is
   never treated as document evidence and can never be cited.

@@ -14,7 +14,7 @@ import requests
 
 from apex_ai.core.errors import ConfigurationError, ProviderError
 from apex_ai.core.logging import get_logger
-from apex_ai.llm.base import LLMProvider, ModelInfo
+from apex_ai.llm.base import LLMProvider, ModelInfo, ToolCall, ToolCallResult
 
 log = get_logger("llm.openai")
 
@@ -22,6 +22,10 @@ log = get_logger("llm.openai")
 class OpenAICompatProvider(LLMProvider):
     name = "openai_compatible"
     supports_streaming = True
+    # Phase 73: the standard OpenAI /chat/completions `tools` param - real,
+    # documented, and what this provider already speaks for every other
+    # request, so no separate translation layer is needed.
+    supports_tools = True
 
     def __init__(self, settings, provider_name: str = "openai_compatible") -> None:
         self.settings = settings
@@ -117,6 +121,52 @@ class OpenAICompatProvider(LLMProvider):
                 why=str(error),
                 fix="Check connectivity and the API base URL.",
             ) from error
+
+    def generate_with_tools(
+        self, messages, tools, *, max_tokens=512, temperature=0.2
+    ) -> ToolCallResult:
+        self.validate()
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "tools": tools,
+        }
+        try:
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=self._headers(),
+                json=payload,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            message = response.json()["choices"][0]["message"]
+        except requests.RequestException as error:
+            raise ProviderError(
+                what=f"The API at {self.base_url} could not be reached or returned an error.",
+                why=str(error),
+                fix="Check your internet connection, API key, and APEX_OPENAI_API_BASE. "
+                    "For offline work use APEX_LLM_PROVIDER=llama_cpp.",
+            ) from error
+        except (KeyError, IndexError, json.JSONDecodeError) as error:
+            raise ProviderError(
+                what="The API response could not be parsed.",
+                why=str(error),
+                fix="Verify the endpoint is OpenAI-compatible (/v1/chat/completions) "
+                    "and supports the `tools` parameter.",
+            ) from error
+        raw_calls = message.get("tool_calls") or []
+        tool_calls = tuple(
+            ToolCall(
+                id=item.get("id", ""),
+                name=item.get("function", {}).get("name", ""),
+                arguments_json=item.get("function", {}).get("arguments", "{}"),
+            )
+            for item in raw_calls
+        )
+        content = message.get("content")
+        return ToolCallResult(content=content, tool_calls=tool_calls)
 
     def get_model_info(self) -> ModelInfo:
         return ModelInfo(provider=self.name, model=self.model, path=self.base_url)

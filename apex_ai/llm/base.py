@@ -17,8 +17,35 @@ missing model without crashing.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterator
+
+from apex_ai.core.errors import ProviderError
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """One function call the model asked for.
+
+    ``arguments_json`` is left as the provider's raw JSON string rather than
+    parsed here: a hallucinated or malformed payload is a tool-*execution*
+    concern (Phase 73's ``ToolRegistry.execute``), not something a provider
+    should have to validate on the model's behalf.
+    """
+
+    id: str
+    name: str
+    arguments_json: str
+
+
+@dataclass(frozen=True)
+class ToolCallResult:
+    """What ``generate_with_tools`` returns: either final text, or one or
+    more tool calls the caller must execute and feed back as ``tool`` role
+    messages before asking again."""
+
+    content: str | None = None
+    tool_calls: tuple[ToolCall, ...] = field(default_factory=tuple)
 
 
 @dataclass
@@ -47,6 +74,11 @@ class LLMProvider(ABC):
 
     name: str = "abstract"
     supports_streaming: bool = False
+    # Phase 73: whether generate_with_tools() below has a real implementation
+    # for this provider. False is the honest default - Apex AI never
+    # simulates tool-calling through prompt tricks for a provider whose API
+    # doesn't actually support it.
+    supports_tools: bool = False
 
     @abstractmethod
     def generate(
@@ -78,6 +110,34 @@ class LLMProvider(ABC):
         """Yield the answer incrementally. Default: single-shot fallback."""
         yield self.generate(prompt, messages=messages, max_tokens=max_tokens,
                             temperature=temperature, stop=stop)
+
+    def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        max_tokens: int = 512,
+        temperature: float = 0.2,
+    ) -> ToolCallResult:
+        """Ask the model to answer or call one of ``tools``.
+
+        ``tools`` is the OpenAI-style function-schema list
+        (``[{"type": "function", "function": {"name", "description",
+        "parameters"}}]``) - the shape every provider that genuinely
+        implements this already speaks natively, so no per-provider
+        translation layer is needed here.
+
+        Default: not supported. Only providers with a real, tested
+        implementation override this.
+        """
+        raise ProviderError(
+            what=f"The '{self.name}' provider does not support tool calling.",
+            why=f"Tool calling requires the provider's own function-calling API; "
+                f"'{self.name}' has none wired up in Apex AI.",
+            fix="Use a provider with real tool-calling support "
+                "(APEX_LLM_PROVIDER=openai_compatible), or don't offer tools "
+                "for this request.",
+        )
 
     @abstractmethod
     def get_model_info(self) -> ModelInfo:
