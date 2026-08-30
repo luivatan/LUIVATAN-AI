@@ -460,6 +460,11 @@ setup walkthrough and the roadmap-phase development workflow this project follow
   until it yields control.
 - Browser layout was built and statically tested at mobile breakpoints; use a real-device
   pass for platform-specific keyboards/safe areas before a public release.
+- No web search integration (Phase 75, deliberately declined): it would require a live
+  network call for some answers, breaking the offline-first guarantee above, and a
+  genuinely separate web-evidence citation pipeline from the document-evidence one that
+  exists today. See `docs/PHASE75_WEB_SEARCH_DECISION.md` for the full reasoning and
+  what would need to be true to revisit it.
 
 ## Project structure & history
 
